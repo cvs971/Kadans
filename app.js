@@ -1549,6 +1549,76 @@ const MIX = {
 };
 
 // ------------------------------------------------------------------ vue : Réglages
+// ------------------------------------------------------------------ fond d'écran (couleur ou image, gardé sur cet iPhone)
+const BG_DEFAULT = '#0E0F12';
+const BG_COLORS = [['#0E0F12', 'Sombre (par défaut)'], ['#0F1626', 'Nuit bleue'], ['#1A1028', 'Violet'], ['#0F1F1A', 'Vert forêt'],
+  ['#24110F', 'Bordeaux'], ['#1E1A12', 'Brun'], ['#1C1D21', 'Gris'], ['#000000', 'Noir']];
+function bgLoad() {
+  try { return JSON.parse(localStorage.getItem('kadans.fond') || 'null') || { type: 'couleur', valeur: BG_DEFAULT }; }
+  catch (e) { return { type: 'couleur', valeur: BG_DEFAULT }; }
+}
+function bgApply(f) {
+  const b = document.body, root = document.documentElement;
+  b.classList.toggle('bg-img', f.type === 'image');
+  if (f.type === 'image') {
+    const d = (f.assombrir ?? 45) / 100;
+    b.style.background = `linear-gradient(rgba(10,11,14,${d}),rgba(10,11,14,${d})), url("${f.valeur}") center / cover no-repeat, ${BG_DEFAULT}`;
+    root.style.background = BG_DEFAULT;
+  } else {
+    const c = f.valeur || BG_DEFAULT;
+    b.style.background = c; root.style.background = c;
+    root.style.setProperty('--bg', c);
+  }
+}
+function bgSave(f) {
+  try { localStorage.setItem('kadans.fond', JSON.stringify(f)); }
+  catch (e) { toast('Image trop lourde à garder : choisis-en une plus petite.'); return false; }
+  bgApply(f); return true;
+}
+function bgCard() {
+  const f = bgLoad();
+  const swatches = h('div', { class: 'swatches' }, BG_COLORS.map(([c, nom]) => h('button', { class: 'swatch', type: 'button', style: 'background:' + c,
+    'aria-label': nom, 'aria-pressed': String(f.type === 'couleur' && (f.valeur || '').toLowerCase() === c.toLowerCase()),
+    onclick: () => { bgSave({ type: 'couleur', valeur: c }); render(); } })));
+  const color = h('input', { type: 'color', value: f.type === 'couleur' ? f.valeur : BG_DEFAULT, 'aria-label': 'Autre couleur' });
+  color.onchange = () => { bgSave({ type: 'couleur', valeur: color.value }); render(); };
+  const file = h('input', { type: 'file', accept: 'image/*', style: 'display:none' });
+  file.onchange = () => {
+    const fl = file.files[0];
+    if (!fl) return;
+    const img = new Image(), url = URL.createObjectURL(fl);
+    img.onload = () => {   // réduite (1400 px max) pour rester légère
+      const k = Math.min(1, 1400 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      if (bgSave({ type: 'image', valeur: c.toDataURL('image/jpeg', 0.82), assombrir: 45 })) { toast('Fond d’écran changé ✓'); render(); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); toast('Cette image ne peut pas être lue.'); };
+    img.src = url;
+  };
+  let dim = null;
+  if (f.type === 'image') {
+    const v = h('span', { style: 'min-width:44px;text-align:right' }, (f.assombrir ?? 45) + ' %');
+    const r = h('input', { type: 'range', min: 0, max: 85, value: f.assombrir ?? 45, style: 'flex:1', 'aria-label': 'Assombrir l’image' });
+    r.oninput = () => { const g = bgLoad(); g.assombrir = +r.value; v.textContent = g.assombrir + ' %'; bgSave(g); };
+    dim = h('label', { class: 'check', style: 'gap:10px' }, 'Assombrir', r, v);
+  }
+  return h('div', { class: 'card', style: 'margin-top:14px' },
+    h('span', { class: 'label' }, 'Fond d’écran'),
+    swatches,
+    h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center' },
+      h('label', { class: 'btn small', style: 'gap:8px' }, 'Autre couleur', color),
+      h('button', { class: 'btn small', type: 'button', onclick: () => file.click() }, 'Choisir une image…'),
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => {
+        localStorage.removeItem('kadans.fond'); document.documentElement.style.removeProperty('--bg'); bgApply(bgLoad()); render();
+      } }, 'Par défaut'),
+      file),
+    dim,
+    h('p', { class: 'sub', style: 'margin:0' }, 'Une couleur, ou une photo de ton iPhone. Gardé sur cet iPhone.'));
+}
+bgApply(bgLoad());
+
 function viewSettings() {
   const st = S.online === true ? 'Connecté' : S.online === false ? 'Injoignable (PC éteint ?)' : (S.server ? 'Connexion…' : 'Non relié');
   const usage = h('span', null, '…');
@@ -1588,6 +1658,7 @@ function viewSettings() {
         await removeOffline([...S.offline.values()], true);
         render(); toast('Espace libéré (tout reste sur ton PC)');
       } }, ico('trash', 18), 'Libérer l’espace')),
+    bgCard(),
     h('div', { class: 'card', style: 'margin-top:14px' },
       h('span', { class: 'label' }, 'Installer l’app'),
       h('ol', { class: 'steps' },

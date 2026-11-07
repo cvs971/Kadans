@@ -174,3 +174,11 @@ h1{margin:0;font-family:var(--display);font-weight:700;font-size:30px;line-heigh
 .track.on-a.on-b{background:linear-gradient(90deg,rgba(255,122,69,.13),rgba(124,156,255,.15));box-shadow:inset 3px 0 var(--accent),inset -3px 0 var(--deckb)}
 .deckbadge{display:inline-grid;place-items:center;min-width:19px;height:19px;padding:0 4px;margin-right:6px;border-radius:6px;font-size:11px;font-weight:800;color:#0E0F12;vertical-align:1px}
 .deckbadge.a{background:var(--accent)}.deckbadge.b{background:var(--deckb)}
+
+/* --- fond d'écran personnalisé --- */
+.swatches{display:flex;flex-wrap:wrap;gap:10px}
+.swatch{width:40px;height:40px;padding:0;border-radius:12px;border:2px solid var(--line2)}
+.swatch[aria-pressed=true]{border-color:var(--text);box-shadow:0 0 0 2px var(--accent)}
+.btn.small input[type=color]{width:28px;height:26px;border:0;padding:0;background:none}
+body.bg-img .tabs{background:rgba(18,19,23,.72);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+body.bg-img #app{background:transparent}
