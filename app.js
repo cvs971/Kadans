@@ -777,7 +777,9 @@ function viewLibrary() {
   const chips = h('div', { class: 'chips' });
   const mk = (val, label) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(S.filter === val), onclick: (e) => {
     S.filter = val; chips.querySelectorAll('.chip:not(.accent)').forEach((c) => c.setAttribute('aria-pressed', 'false'));
-    e.currentTarget.setAttribute('aria-pressed', 'true'); renderList();
+    e.currentTarget.setAttribute('aria-pressed', 'true');
+    if (val === 'tout' && S.folder != null) openFolder(null);   // « Tout » = tous les morceaux du PC, quel que soit le dossier ouvert
+    else renderList();
   } }, label);
   chips.append(mk('tout', 'Tout'), mk('iphone', 'Sur l’iPhone'), mk('clips', 'Clips'));
   sources.forEach((s) => chips.append(mk('src:' + s, s.replace('Téléchargements Kadans', 'Téléchargés'))));
