@@ -64,20 +64,31 @@ function fmtSize(b) {
 const COLORS = ['#4A2E3A', '#2E4A42', '#3A3A52', '#4A3F2E', '#2E3A4A', '#43304A', '#2F4436', '#4A3530'];
 function colorFor(id) { let n = 0; for (const c of String(id)) n = (n * 31 + c.charCodeAt(0)) >>> 0; return COLORS[n % COLORS.length]; }
 
+// Liste gardée dans le téléphone : jamais de plantage si elle est abîmée.
+function safeList(key) {
+  try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+}
+// Morceau reçu du PC ou gardé sur l'iPhone : on complète ce qui manque pour que l'affichage ne casse pas.
+function cleanTrack(t) {
+  if (!t || typeof t !== 'object' || t.id == null) return null;
+  return { ...t, id: String(t.id), titre: t.titre == null || t.titre === '' ? 'Sans titre' : String(t.titre),
+    artiste: t.artiste == null ? '' : String(t.artiste), categorie: t.categorie == null ? t.categorie : String(t.categorie) };
+}
+
 // ------------------------------------------------------------------ état
 const S = {
   server: localStorage.getItem('kadans.serveur') || '',
   key: localStorage.getItem('kadans.cle') || '',
   online: null,          // null = inconnu, true/false
   pcName: '',
-  lib: JSON.parse(localStorage.getItem('kadans.lib') || '[]'),
+  lib: safeList('kadans.lib'),
   offline: new Map(),    // id -> métadonnées des morceaux gardés sur l'iPhone
   saving: new Map(),     // id -> pourcentage d'enregistrement hors ligne
   jobs: [],
   handled: new Set(),
   tab: 'ajouter',
   format: localStorage.getItem('kadans.format') || 'mp3',
-  cats: JSON.parse(localStorage.getItem('kadans.cats') || '[]'),   // catégories = sous-dossiers du dossier de téléchargement du PC
+  cats: safeList('kadans.cats').filter((c) => typeof c === 'string'),   // catégories = sous-dossiers du dossier de téléchargement du PC
   cat: localStorage.getItem('kadans.cat') || '',                   // catégorie choisie pour les prochains téléchargements
   folder: localStorage.getItem('kadans.dossier'),                  // dossier ouvert dans la Bibliothèque (null = tous, '' = sans catégorie)
   excl: JSON.parse(localStorage.getItem('kadans.excl') || '{}'),   // id -> true (retiré de l'iPhone : le PC ne le renvoie plus) / false (de nouveau voulu)
@@ -161,7 +172,9 @@ async function checkServer() {
 async function refreshLibrary() {
   if (!S.server) return;
   try {
-    S.lib = await api('/api/bibliotheque', { timeout: 15000 });
+    const lib = await api('/api/bibliotheque', { timeout: 15000 });
+    if (!Array.isArray(lib)) throw new Error('réponse inattendue du PC');   // ex. page d'erreur du tunnel
+    S.lib = lib.map(cleanTrack).filter(Boolean);
     S.online = true;
     localStorage.setItem('kadans.lib', JSON.stringify(S.lib.slice(0, 3000)));
     await refreshCats();
@@ -315,7 +328,10 @@ const coverCache = new Map();
 async function loadOffline() {
   try {
     const metas = await DB.allMeta();
-    S.offline = new Map(metas.map((m) => [m.id, m]));
+    S.offline = new Map((metas || []).filter((m) => m && m.id != null).map((m) => {
+      if (m.titre == null || m.titre === '') m.titre = 'Sans titre'; else m.titre = String(m.titre);
+      return [m.id, m];
+    }));
   } catch (e) { console.warn(e); }
 }
 
@@ -618,12 +634,31 @@ function render() {
   const v = $('#view');
   v.innerHTML = '';
   const views = { ajouter: viewAdd, biblio: viewLibrary, mix: () => MIX.view(), reglages: viewSettings };
-  v.append(views[S.tab]());
-  if (S.tab === 'biblio') renderList();
-  if (S.tab === 'ajouter') renderJobs();
-  renderSyncBanner();
-  if (S.tab === 'mix') MIX.mount();
+  try {
+    v.append((views[S.tab] || viewAdd)());
+    if (S.tab === 'biblio') renderList();
+    if (S.tab === 'ajouter') renderJobs();
+    renderSyncBanner();
+    if (S.tab === 'mix') MIX.mount();
+  } catch (e) {
+    // jamais d'écran noir : on montre l'erreur et un moyen de repartir
+    console.error(e);
+    v.replaceChildren(h('div', { class: 'card', style: 'margin-top:40px;border-color:#4A2A2E' },
+      h('b', null, 'Oups, cet écran a planté'),
+      h('p', { class: 'sub', style: 'margin:0;word-break:break-word' }, 'Erreur : ' + ((e && e.message) || e) + (e && e.stack ? ' — ' + String(e.stack).split('\n')[0] : '')),
+      h('button', { class: 'btn primary', type: 'button', onclick: () => {
+        // n'efface que l'affichage mémorisé (liste, dossier ouvert) : la musique gardée sur l'iPhone reste
+        ['kadans.lib', 'kadans.dossier', 'kadans.cats'].forEach((k) => localStorage.removeItem(k));
+        location.reload();
+      } }, 'Réparer l’affichage')));
+  }
 }
+window.addEventListener('error', (e) => toast('Erreur : ' + (e.message || 'inconnue'), 6000));
+window.addEventListener('unhandledrejection', (e) => {
+  const r = e.reason;
+  if (r && ['AbortError', 'NotAllowedError'].includes(r.name)) return;   // lecture refusée, requête annulée : normal
+  toast('Erreur : ' + ((r && r.message) || r || 'inconnue'), 6000);
+});
 function statusPill() {
   let cls = 'dot', txt = 'PC non relié';
   if (S.server) {
@@ -891,6 +926,9 @@ function renderList() {
   if (list.length > max) box.append(h('div', { class: 'empty' }, `+ ${list.length - max} autres : affine ta recherche.`));
 }
 function refreshTrackRows() {
+  try { refreshRows(); } catch (e) { render(); }   // render() affiche l'erreur au lieu d'un écran vide
+}
+function refreshRows() {
   if (S.tab === 'biblio') { renderList(); const c = $('#count'); if (c) c.textContent = `${allTracks().length} morceaux · ${S.offline.size} sur l’iPhone`; }
   else if (S.tab === 'ajouter') { const r = $('.list-recents'); if (r) { const rec = allTracks().slice(0, 5); r.replaceChildren(...rec.map((t) => trackRow(t, rec))); } }
 }
