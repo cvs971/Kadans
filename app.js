@@ -79,6 +79,8 @@ const S = {
   format: localStorage.getItem('kadans.format') || 'mp3',
   cats: JSON.parse(localStorage.getItem('kadans.cats') || '[]'),   // catégories = sous-dossiers du dossier de téléchargement du PC
   cat: localStorage.getItem('kadans.cat') || '',                   // catégorie choisie pour les prochains téléchargements
+  folder: localStorage.getItem('kadans.dossier'),                  // dossier ouvert dans la Bibliothèque (null = tous, '' = sans catégorie)
+  excl: JSON.parse(localStorage.getItem('kadans.excl') || '{}'),   // id -> true (retiré de l'iPhone : le PC ne le renvoie plus) / false (de nouveau voulu)
   autoOffline: localStorage.getItem('kadans.auto') !== '0',
   syncAuto: localStorage.getItem('kadans.syncAuto') !== '0',
   sendAuto: localStorage.getItem('kadans.sendAuto') !== '0',
@@ -308,38 +310,93 @@ async function saveOffline(item, quiet = false) {
   if (S.offline.has(item.id) || S.saving.has(item.id)) return;
   if (!S.online) { toast('Ton PC doit être allumé pour garder ce morceau.'); return; }
   S.saving.set(item.id, 0);
-  refreshTrackRows();
+  laterRefresh();
   try {
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
     let last = 0;
     const blob = await fetchWithProgress(fileURL(item.id), (p) => {
       S.saving.set(item.id, p);
-      if (p - last >= 5) { last = p; refreshTrackRows(); }
+      if (p - last >= 2) { last = p; showProgress(item.id, p); }   // juste le pourcentage, pas toute la liste
     });
     let cover = null;
-    try { const c = await fetch(coverURL(item.id)); if (c.ok) cover = await c.blob(); } catch (e) { /* pas de pochette */ }
+    if (!noCover.has(item.id)) {
+      try { const c = await fetch(coverURL(item.id)); if (c.ok) cover = await c.blob(); else noCover.add(item.id); } catch (e) { /* pas de pochette */ }
+    }
+    if (cover) coverCache.set(item.id, URL.createObjectURL(cover));
     const meta = { id: item.id, titre: item.titre, artiste: item.artiste, bpm: item.bpm, duree: item.duree,
       type: item.type, ext: item.ext, source: item.source, categorie: item.categorie, ajoute: item.ajoute || Date.now() / 1000,
       taille: blob.size, garde: Date.now() };
     await DB.put(meta, blob, cover);
     S.offline.set(item.id, meta);
+    if (S.excl[item.id]) markExcl([item.id], false);
     if (!quiet) toast('« ' + item.titre + ' » est sur ton iPhone ✓');
   } catch (e) {
     if (!quiet) toast('Échec : ' + e.message);
     else SYNC.errors++;
   } finally {
     S.saving.delete(item.id);
-    refreshTrackRows();
+    laterRefresh();
   }
 }
-async function removeOffline(item) {
-  await DB.remove(item.id);
-  S.offline.delete(item.id);
-  coverCache.delete(item.id);
+// Pendant les transferts : on regroupe les mises à jour de la liste (au plus ~1 par seconde).
+let refreshTimer = 0;
+function laterRefresh() {
+  if (refreshTimer) return;
+  refreshTimer = setTimeout(() => { refreshTimer = 0; refreshTrackRows(); }, 900);
+}
+function showProgress(id, p) {
+  document.querySelectorAll(`[data-pct="${CSS.escape(id)}"]`).forEach((e) => { e.textContent = p + '%'; });
+}
+// Transfère plusieurs morceaux en parallèle (3 à la fois : bien plus rapide via le tunnel).
+async function saveMany(list, onEach, keepGoing = () => true) {
+  const queue = [...list];
+  const worker = async () => {
+    while (queue.length && S.online && keepGoing()) {
+      const t = queue.shift();
+      await saveOffline(t, true);
+      if (onEach) onEach(t);
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+}
+// Retire des morceaux de l'iPhone SEULEMENT : les fichiers du PC ne sont jamais touchés,
+// et le PC ne les renverra plus à la synchronisation (sauf si tu les recoches sur le PC).
+async function removeOffline(items, ask = true) {
+  items = (Array.isArray(items) ? items : [items]).filter((t) => S.offline.has(t.id));
+  if (!items.length) return;
+  const only = items.filter((t) => { const m = S.offline.get(t.id); return phoneOnly().includes(m); });
+  if (ask && only.length && !confirm(only.length === 1
+    ? '« ' + only[0].titre + ' » n’existe que sur cet iPhone (pas encore envoyé sur le PC). Le supprimer définitivement ?'
+    : only.length + ' morceau(x) n’existent que sur cet iPhone. Les supprimer définitivement ?')) return;
+  const ids = [];
+  for (const t of items) {
+    const m = S.offline.get(t.id);
+    await DB.remove(t.id);
+    S.offline.delete(t.id);
+    coverCache.delete(t.id);
+    ids.push(t.id);
+    if (m && m.pcId) ids.push(m.pcId);
+  }
+  markExcl(ids, true);
   refreshTrackRows();
-  toast('Retiré du téléphone');
+  toast(items.length === 1 ? 'Retiré de l’iPhone (toujours sur ton PC)' : items.length + ' morceaux retirés de l’iPhone (toujours sur ton PC)');
   reportIphone();
-  refreshSync();
+  renderSyncBanner();
+}
+function markExcl(ids, excluded) {
+  for (const id of ids) S.excl[id] = excluded;
+  localStorage.setItem('kadans.excl', JSON.stringify(S.excl));
+  flushExcl();
+}
+async function flushExcl() {
+  const ids = Object.keys(S.excl);
+  if (!ids.length || !S.online) return;
+  const sent = { ...S.excl };
+  try {
+    await api('/api/sync/exclure', { method: 'POST', json: { exclure: ids.filter((i) => sent[i]), inclure: ids.filter((i) => !sent[i]) } });
+    for (const i of ids) if (S.excl[i] === sent[i]) delete S.excl[i];
+    localStorage.setItem('kadans.excl', JSON.stringify(S.excl));
+  } catch (e) { /* PC injoignable : on réessaiera */ }
 }
 
 // ------------------------------------------------------------------ synchronisation avec le PC
@@ -355,9 +412,10 @@ async function reportIphone() {
 async function refreshSync() {
   if (!S.online) { renderSyncBanner(); return; }
   try {
+    await flushExcl();
     const d = await api('/api/sync');
     const ids = new Set(d.ids);
-    SYNC.wanted = allTracks().filter((t) => ids.has(t.id));
+    SYNC.wanted = allTracks().filter((t) => ids.has(t.id) && S.excl[t.id] !== true);
     const lastAsk = +localStorage.getItem('kadans.syncDemande') || 0;
     const asked = d.demande > lastAsk;
     if (asked) localStorage.setItem('kadans.syncDemande', String(d.demande));
@@ -374,12 +432,7 @@ async function runSync() {
   SYNC.running = true; SYNC.done = 0; SYNC.errors = 0; SYNC.total = todo.length;
   renderSyncBanner();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
-  for (const t of todo) {
-    if (!S.online || !SYNC.running) break;
-    await saveOffline(t, true);
-    SYNC.done++;
-    renderSyncBanner();
-  }
+  await saveMany(todo, () => { SYNC.done++; renderSyncBanner(); }, () => SYNC.running);
   const ok = SYNC.done - SYNC.errors;
   SYNC.running = false;
   await reportIphone();
@@ -508,7 +561,7 @@ function coverEl(t, cls = '') {
     (t.titre || '?').trim().charAt(0).toUpperCase());
   const add = (src) => {
     const img = h('img', { src, alt: '', style: 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover' });
-    img.onerror = () => img.remove();
+    img.onerror = () => { img.remove(); noCover.add(t.id); };   // ne plus la redemander au PC
     el.append(img);
   };
   if (coverCache.has(t.id)) { const u = coverCache.get(t.id); if (u) add(u); }
@@ -518,9 +571,10 @@ function coverEl(t, cls = '') {
       coverCache.set(t.id, u);
       if (u) add(u);
     }).catch(() => {});
-  } else if (S.online && t.type === 'audio') add(coverURL(t.id));
+  } else if (S.online && t.type === 'audio' && !noCover.has(t.id)) add(coverURL(t.id));
   return el;
 }
+const noCover = new Set();   // morceaux sans pochette sur le PC
 
 // ------------------------------------------------------------------ navigation
 function setTab(tab) {
@@ -698,8 +752,6 @@ function viewLibrary() {
   } }, label);
   chips.append(mk('tout', 'Tout'), mk('iphone', 'Sur l’iPhone'), mk('clips', 'Clips'));
   sources.forEach((s) => chips.append(mk('src:' + s, s.replace('Téléchargements Kadans', 'Téléchargés'))));
-  const used = new Set(all.map((t) => t.categorie).filter(Boolean));
-  S.cats.filter((c) => used.has(c)).forEach((c) => chips.append(mk('cat:' + c, c)));
   const bpmChip = h('button', { class: 'chip accent', type: 'button', 'aria-pressed': String(S.bpmOn), onclick: () => {
     S.bpmOn = !S.bpmOn; bpmChip.setAttribute('aria-pressed', String(S.bpmOn)); range.hidden = !S.bpmOn; renderList();
   } }, 'BPM');
@@ -712,8 +764,69 @@ function viewLibrary() {
   mx.oninput = () => { S.bpmMax = +mx.value || 999; renderList(); };
   const range = h('div', { class: 'bpm-range' }, 'BPM entre', mn, 'et', mx);
   range.hidden = !S.bpmOn;
-  wrap.append(range, h('div', { id: 'list' }));
+  wrap.append(range, h('div', { id: 'folders' }), h('div', { id: 'list' }));
   return wrap;
+}
+
+// ------------------------------------------------------------------ dossiers et sous-dossiers (comme sur le PC)
+const parentOf = (c) => (c.includes('/') ? c.slice(0, c.lastIndexOf('/')) : null);
+const inFolder = (t, f) => (f === '' ? t.categorie === '' : t.categorie === f || (t.categorie || '').startsWith(f + '/'));
+function allFolders(tracks) {
+  const set = new Set(S.cats);
+  for (const t of tracks) {   // aussi ceux connus seulement par les morceaux gardés (PC éteint)
+    let c = t.categorie;
+    while (c) { set.add(c); c = parentOf(c); }
+  }
+  return [...set].sort((a, b) => a.split('/').map((s) => s.toLowerCase()).join('\u0000').localeCompare(b.split('/').map((s) => s.toLowerCase()).join('\u0000'), 'fr'));
+}
+function openFolder(f) {
+  S.folder = f;
+  if (f == null) localStorage.removeItem('kadans.dossier'); else localStorage.setItem('kadans.dossier', f);
+  renderList();
+  $('#view').scrollTop = 0;
+}
+function renderFolders() {
+  const box = $('#folders');
+  if (!box) return;
+  const all = allTracks(), F = S.folder;
+  const folders = allFolders(all);
+  if (F && !folders.includes(F)) { S.folder = null; localStorage.removeItem('kadans.dossier'); return renderFolders(); }
+  box.replaceChildren();
+  if (!folders.length && !all.some((t) => t.categorie === '')) return;
+  // fil d'Ariane : Tous › Zouk › Années 80
+  const crumb = (f, label) => h('button', { type: 'button', 'aria-current': F === f ? 'page' : null, onclick: () => openFolder(f) }, label);
+  const crumbs = h('div', { class: 'crumbs' }, crumb(null, 'Tous les dossiers'));
+  if (F === '') crumbs.append(h('span', { class: 'sep' }, '›'), crumb('', 'Sans catégorie'));
+  else if (F) F.split('/').forEach((seg, i, arr) => crumbs.append(h('span', { class: 'sep' }, '›'), crumb(arr.slice(0, i + 1).join('/'), seg)));
+  box.append(crumbs);
+  // sous-dossiers du dossier ouvert
+  const subs = F === '' ? [] : folders.filter((c) => parentOf(c) === (F || null));
+  const tile = (f, label) => {
+    const inside = all.filter((t) => inFolder(t, f));
+    const kept = inside.filter((t) => S.offline.has(t.id)).length;
+    return h('button', { class: 'ftile', type: 'button', onclick: () => openFolder(f) },
+      h('span', { class: 'ico', html: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>' }),
+      h('span', { class: 'm' }, h('span', { class: 't1' }, label),
+        h('span', { class: 't2' }, inside.length + ' morceau' + (inside.length > 1 ? 'x' : '') + (kept ? ' · ' + kept + ' sur l’iPhone' : ''))));
+  };
+  const tiles = subs.map((c) => tile(c, c.split('/').pop()));
+  if (F == null && all.some((t) => t.categorie === '')) tiles.push(tile('', 'Sans catégorie'));
+  if (tiles.length) box.append(h('div', { class: 'ftiles' }, tiles));
+  // actions sur le dossier ouvert : tout garder / tout retirer de l'iPhone
+  if (F != null) {
+    const inside = all.filter((t) => inFolder(t, F));
+    const missing = inside.filter((t) => !S.offline.has(t.id)), kept = inside.filter((t) => S.offline.has(t.id));
+    const acts = h('div', { class: 'factions' });
+    if (missing.length && S.online) acts.append(h('button', { class: 'btn small', type: 'button', onclick: async () => {
+      toast(`${missing.length} morceau(x) en cours d’enregistrement…`);
+      await saveMany(missing);
+      toast('Dossier gardé sur l’iPhone ✓'); reportIphone();
+    } }, ico('download', 18), `Tout garder sur l’iPhone (${missing.length})`));
+    if (kept.length) acts.append(h('button', { class: 'btn small ghost', type: 'button', onclick: () => {
+      if (confirm(`Retirer les ${kept.length} morceau(x) de ce dossier de l’iPhone ?\nIls restent sur ton PC.`)) removeOffline(kept, true);
+    } }, ico('trash', 18), `Retirer de l’iPhone (${kept.length})`));
+    if (acts.children.length) box.append(acts);
+  }
 }
 function filteredTracks() {
   const q = S.query.trim().toLowerCase();
@@ -721,11 +834,11 @@ function filteredTracks() {
     if (S.filter === 'iphone' && !S.offline.has(t.id)) return false;
     if (S.filter === 'clips' && t.type !== 'video') return false;
     if (S.filter.startsWith('src:') && t.source !== S.filter.slice(4)) return false;
-    if (S.filter.startsWith('cat:') && t.categorie !== S.filter.slice(4)) return false;
+    if (S.folder != null && !inFolder(t, S.folder)) return false;
     if (S.bpmOn && !(t.bpm >= S.bpmMin && t.bpm <= S.bpmMax)) return false;
     if (q) {
       if (/^\d{2,3}$/.test(q)) return t.bpm && Math.abs(t.bpm - +q) <= 3;
-      return ((t.titre || '') + ' ' + (t.artiste || '')).toLowerCase().includes(q);
+      return ((t.titre || '') + ' ' + (t.artiste || '') + ' ' + (t.categorie || '')).toLowerCase().includes(q);
     }
     return true;
   });
@@ -733,11 +846,12 @@ function filteredTracks() {
 function renderList() {
   const box = $('#list');
   if (!box) return;
+  renderFolders();
   const list = filteredTracks();
   box.innerHTML = '';
   if (!list.length) {
     box.append(h('div', { class: 'empty' }, S.lib.length || S.offline.size
-      ? 'Aucun morceau ne correspond.'
+      ? (S.folder != null ? 'Aucun morceau dans ce dossier.' : 'Aucun morceau ne correspond.')
       : (S.online ? 'Ta bibliothèque est vide. Ajoute un lien ou un dossier sur le PC.' : 'Rien sur l’iPhone pour l’instant. Relie ton PC pour commencer.')));
     return;
   }
@@ -752,7 +866,7 @@ function refreshTrackRows() {
 function trackRow(t, list) {
   const isCur = S.current && S.current.id === t.id;
   let state;
-  if (S.saving.has(t.id)) state = h('span', { class: 'bpm wait', style: 'min-width:46px' }, S.saving.get(t.id) + '%');
+  if (S.saving.has(t.id)) state = h('span', { class: 'bpm wait', style: 'min-width:46px', 'data-pct': t.id }, S.saving.get(t.id) + '%');
   else if (S.offline.has(t.id)) state = h('span', { class: 'icon-btn state-ok', title: 'Sur l’iPhone', html: iconHTML('check', 20), role: 'img', 'aria-label': 'Sur l’iPhone' });
   else state = h('button', { class: 'icon-btn state-dl', type: 'button', 'aria-label': 'Garder sur l’iPhone', html: iconHTML('download', 20),
     onclick: (e) => { e.stopPropagation(); saveOffline(t); } });
@@ -780,7 +894,7 @@ function trackMenu(t) {
     S.online && t.categorie != null ? h('button', { class: 'menu-item', type: 'button', onclick: () => moveMenu(t) },
       ico('music', 20), 'Ranger dans une catégorie' + (t.categorie ? ' (' + t.categorie + ')' : '')) : null,
     S.offline.has(t.id)
-      ? h('button', { class: 'menu-item red', type: 'button', onclick: () => { closeSheet(); removeOffline(t); } }, ico('trash', 20), 'Retirer du téléphone')
+      ? h('button', { class: 'menu-item red', type: 'button', onclick: () => { closeSheet(); removeOffline(t); } }, ico('trash', 20), 'Retirer de l’iPhone (reste sur le PC)')
       : h('button', { class: 'menu-item', type: 'button', onclick: () => { closeSheet(); saveOffline(t); } }, ico('phone', 20), 'Garder sur l’iPhone (hors ligne)')));
 }
 
@@ -1243,8 +1357,8 @@ function viewSettings() {
       h('div', { class: 'kv' }, h('span', null, 'Espace'), usage),
       h('button', { class: 'btn small danger', type: 'button', onclick: async () => {
         if (!confirm('Retirer TOUS les morceaux de l’iPhone ? (Ils restent sur ton PC.)')) return;
-        for (const id of [...S.offline.keys()]) await DB.remove(id);
-        S.offline.clear(); coverCache.clear(); render(); toast('Espace libéré');
+        await removeOffline([...S.offline.values()], true);
+        render(); toast('Espace libéré (tout reste sur ton PC)');
       } }, ico('trash', 18), 'Libérer l’espace')),
     h('div', { class: 'card', style: 'margin-top:14px' },
       h('span', { class: 'label' }, 'Installer l’app'),
@@ -1252,7 +1366,7 @@ function viewSettings() {
         h('li', null, 'Ouvre cette page dans Safari.'),
         h('li', null, 'Touche Partager (carré avec une flèche).'),
         h('li', null, 'Touche « Sur l’écran d’accueil », puis « Ajouter ».'))),
-    h('p', { class: 'sub', style: 'text-align:center;margin:20px 0 4px' }, 'Kadans 1.4 · usage personnel'));
+    h('p', { class: 'sub', style: 'text-align:center;margin:20px 0 4px' }, 'Kadans 1.5 · usage personnel'));
 }
 
 // ------------------------------------------------------------------ démarrage
