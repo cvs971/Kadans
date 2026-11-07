@@ -2,7 +2,7 @@
 
 Ta musique, hors ligne : téléchargement depuis un lien, bibliothèque, BPM, recherche et mix à 2 platines.
 
-**Ouvrir l'app :** https://cvs971.github.io/kadans
+**Ouvrir l'app :** https://cvs971.github.io/Kadans
 
 Cette app fonctionne avec le logiciel **Kadans pour PC**, qui fait les téléchargements
 et partage ta bibliothèque. Lance Kadans sur le PC, puis scanne le QR code affiché
