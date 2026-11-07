@@ -77,6 +77,8 @@ const S = {
   handled: new Set(),
   tab: 'ajouter',
   format: localStorage.getItem('kadans.format') || 'mp3',
+  cats: JSON.parse(localStorage.getItem('kadans.cats') || '[]'),   // catégories = sous-dossiers du dossier de téléchargement du PC
+  cat: localStorage.getItem('kadans.cat') || '',                   // catégorie choisie pour les prochains téléchargements
   autoOffline: localStorage.getItem('kadans.auto') !== '0',
   syncAuto: localStorage.getItem('kadans.syncAuto') !== '0',
   sendAuto: localStorage.getItem('kadans.sendAuto') !== '0',
@@ -160,8 +162,58 @@ async function refreshLibrary() {
     S.lib = await api('/api/bibliotheque', { timeout: 15000 });
     S.online = true;
     localStorage.setItem('kadans.lib', JSON.stringify(S.lib.slice(0, 3000)));
+    await refreshCats();
   } catch (e) { S.online = false; }
   updatePill();
+}
+async function refreshCats() {
+  try { setCats((await api('/api/categories')).categories.map((c) => c.nom)); } catch (e) { /* ancien PC sans catégories */ }
+}
+function setCats(list) {
+  S.cats = list;
+  localStorage.setItem('kadans.cats', JSON.stringify(list));
+  if (S.cat && !list.includes(S.cat)) { S.cat = ''; localStorage.setItem('kadans.cat', ''); }
+}
+// Feuille « Nouvelle catégorie » : crée le dossier sur le PC, puis rappelle done(nom).
+function askCategory(done) {
+  openSheet(() => {
+    const inp = h('input', { class: 'input', type: 'text', maxlength: 60, placeholder: 'Ex. Zouk, Kompa, Dancehall…', 'aria-label': 'Nom de la catégorie' });
+    const ok = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
+      const nom = inp.value.trim();
+      if (!nom) { inp.focus(); return; }
+      ok.disabled = true;
+      try {
+        const d = await api('/api/categories', { method: 'POST', json: { nom } });
+        setCats(d.categories.map((c) => c.nom));
+        closeSheet(); toast('Catégorie « ' + d.nom + ' » créée ✓');
+        done(d.nom);
+      } catch (e) { toast(e.message); ok.disabled = false; }
+    } }, 'Créer');
+    setTimeout(() => inp.focus(), 50);
+    return h('div', { class: 'card', style: 'background:none;border:0;padding:0' },
+      h('b', null, 'Nouvelle catégorie'),
+      h('p', { class: 'sub', style: 'margin:0' }, 'Un dossier de ce nom est créé sur ton PC, dans le dossier de téléchargement.'),
+      inp, ok);
+  });
+}
+// Feuille « Ranger dans… » : déplace le fichier sur le PC.
+function moveMenu(t) {
+  const go = async (cat) => {
+    closeSheet();
+    try {
+      await api('/api/ranger', { method: 'POST', json: { ids: [t.id], categorie: cat } });
+      const m = S.offline.get(t.id);
+      if (m) { m.categorie = cat; DB.putMeta(m); }
+      await refreshLibrary(); refreshTrackRows();
+      toast('Rangé dans « ' + (cat || 'Sans catégorie') + ' » ✓');
+    } catch (e) { toast(e.message); }
+  };
+  openSheet(() => h('div', null,
+    h('b', { style: 'display:block;margin-bottom:6px' }, 'Ranger « ' + t.titre + ' »'),
+    [['', 'Sans catégorie'], ...S.cats.map((c) => [c, c])].map(([val, label]) =>
+      h('button', { class: 'menu-item', type: 'button', onclick: () => go(val) },
+        ico(t.categorie === val ? 'check' : 'music', 20), label)),
+    h('button', { class: 'menu-item', type: 'button', style: 'color:var(--accent)', onclick: () => askCategory(go) }, ico('a', 20), 'Nouvelle catégorie…')));
 }
 async function refreshJobs() {
   if (!S.server || !S.online) return;
@@ -267,7 +319,7 @@ async function saveOffline(item, quiet = false) {
     let cover = null;
     try { const c = await fetch(coverURL(item.id)); if (c.ok) cover = await c.blob(); } catch (e) { /* pas de pochette */ }
     const meta = { id: item.id, titre: item.titre, artiste: item.artiste, bpm: item.bpm, duree: item.duree,
-      type: item.type, ext: item.ext, source: item.source, ajoute: item.ajoute || Date.now() / 1000,
+      type: item.type, ext: item.ext, source: item.source, categorie: item.categorie, ajoute: item.ajoute || Date.now() / 1000,
       taille: blob.size, garde: Date.now() };
     await DB.put(meta, blob, cover);
     S.offline.set(item.id, meta);
@@ -544,6 +596,17 @@ function viewAdd() {
         e.currentTarget.setAttribute('aria-pressed', 'true');
       } }, label));
     });
+    const catChips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Catégorie', style: 'margin:0' });
+    const drawCatChips = () => {
+      catChips.replaceChildren(...[['', 'Sans catégorie'], ...S.cats.map((c) => [c, c])].map(([val, label]) =>
+        h('button', { class: 'chip', type: 'button', 'aria-pressed': String(S.cat === val), onclick: () => {
+          S.cat = val; localStorage.setItem('kadans.cat', val); drawCatChips();
+        } }, label)),
+      h('button', { class: 'chip accent', type: 'button', onclick: () => askCategory((nom) => {
+        S.cat = nom; localStorage.setItem('kadans.cat', nom); drawCatChips();
+      }) }, '+ Nouvelle'));
+    };
+    drawCatChips();
     const auto = h('input', { type: 'checkbox', id: 'auto' });
     auto.checked = S.autoOffline;
     auto.onchange = () => { S.autoOffline = auto.checked; localStorage.setItem('kadans.auto', auto.checked ? '1' : '0'); };
@@ -552,9 +615,9 @@ function viewAdd() {
       if (!/^https?:\/\//.test(url)) { toast('Colle un lien qui commence par https://'); return; }
       go.disabled = true;
       try {
-        await api('/api/telecharger', { method: 'POST', json: { url, format: S.format } });
+        await api('/api/telecharger', { method: 'POST', json: { url, format: S.format, categorie: S.cat } });
         input.value = '';
-        toast('C’est parti ! Ton PC télécharge…');
+        toast('C’est parti ! Ton PC télécharge' + (S.cat ? ' dans « ' + S.cat + ' »…' : '…'));
         await refreshJobs();
       } catch (e) { toast(e.message); }
       go.disabled = false;
@@ -562,6 +625,7 @@ function viewAdd() {
     wrap.append(h('div', { class: 'card', style: 'margin-top:22px' },
       h('label', { class: 'label', for: 'lien' }, 'Lien YouTube'),
       h('div', { class: 'field' }, input, paste), seg,
+      h('span', { class: 'label' }, 'Ranger dans'), catChips,
       h('label', { class: 'check', for: 'auto' }, auto, 'Garder sur l’iPhone automatiquement'),
       go));
   }
@@ -634,6 +698,8 @@ function viewLibrary() {
   } }, label);
   chips.append(mk('tout', 'Tout'), mk('iphone', 'Sur l’iPhone'), mk('clips', 'Clips'));
   sources.forEach((s) => chips.append(mk('src:' + s, s.replace('Téléchargements Kadans', 'Téléchargés'))));
+  const used = new Set(all.map((t) => t.categorie).filter(Boolean));
+  S.cats.filter((c) => used.has(c)).forEach((c) => chips.append(mk('cat:' + c, c)));
   const bpmChip = h('button', { class: 'chip accent', type: 'button', 'aria-pressed': String(S.bpmOn), onclick: () => {
     S.bpmOn = !S.bpmOn; bpmChip.setAttribute('aria-pressed', String(S.bpmOn)); range.hidden = !S.bpmOn; renderList();
   } }, 'BPM');
@@ -655,6 +721,7 @@ function filteredTracks() {
     if (S.filter === 'iphone' && !S.offline.has(t.id)) return false;
     if (S.filter === 'clips' && t.type !== 'video') return false;
     if (S.filter.startsWith('src:') && t.source !== S.filter.slice(4)) return false;
+    if (S.filter.startsWith('cat:') && t.categorie !== S.filter.slice(4)) return false;
     if (S.bpmOn && !(t.bpm >= S.bpmMin && t.bpm <= S.bpmMax)) return false;
     if (q) {
       if (/^\d{2,3}$/.test(q)) return t.bpm && Math.abs(t.bpm - +q) <= 3;
@@ -710,6 +777,8 @@ function trackMenu(t) {
       h('span', { class: 'badge', style: 'width:24px;height:24px;font-size:12px;border-radius:7px;background:var(--accent)' }, 'A'), 'Charger sur la platine A') : null,
     t.type === 'audio' ? h('button', { class: 'menu-item', type: 'button', onclick: () => { closeSheet(); MIX.load('B', t); setTab('mix'); } },
       h('span', { class: 'badge', style: 'width:24px;height:24px;font-size:12px;border-radius:7px;background:var(--deckb)' }, 'B'), 'Charger sur la platine B') : null,
+    S.online && t.categorie != null ? h('button', { class: 'menu-item', type: 'button', onclick: () => moveMenu(t) },
+      ico('music', 20), 'Ranger dans une catégorie' + (t.categorie ? ' (' + t.categorie + ')' : '')) : null,
     S.offline.has(t.id)
       ? h('button', { class: 'menu-item red', type: 'button', onclick: () => { closeSheet(); removeOffline(t); } }, ico('trash', 20), 'Retirer du téléphone')
       : h('button', { class: 'menu-item', type: 'button', onclick: () => { closeSheet(); saveOffline(t); } }, ico('phone', 20), 'Garder sur l’iPhone (hors ligne)')));
@@ -1183,7 +1252,7 @@ function viewSettings() {
         h('li', null, 'Ouvre cette page dans Safari.'),
         h('li', null, 'Touche Partager (carré avec une flèche).'),
         h('li', null, 'Touche « Sur l’écran d’accueil », puis « Ajouter ».'))),
-    h('p', { class: 'sub', style: 'text-align:center;margin:20px 0 4px' }, 'Kadans 1.3 · usage personnel'));
+    h('p', { class: 'sub', style: 'text-align:center;margin:20px 0 4px' }, 'Kadans 1.4 · usage personnel'));
 }
 
 // ------------------------------------------------------------------ démarrage
