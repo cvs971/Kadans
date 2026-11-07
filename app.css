@@ -166,3 +166,11 @@ h1{margin:0;font-family:var(--display);font-weight:700;font-size:30px;line-heigh
 .transport .btn.small{padding:0 11px;min-width:44px}
 .transport .bend{display:flex;gap:6px;margin-left:auto}
 .transport .bend .btn{width:44px;padding:0;font-size:18px}
+
+/* --- morceau chargé sur une platine : surligné + badge A / B --- */
+.track.on-a,.track.on-b{padding-left:10px;padding-right:4px;border-radius:12px}
+.track.on-a{background:rgba(255,122,69,.13);box-shadow:inset 3px 0 var(--accent)}
+.track.on-b{background:rgba(124,156,255,.15);box-shadow:inset 3px 0 var(--deckb)}
+.track.on-a.on-b{background:linear-gradient(90deg,rgba(255,122,69,.13),rgba(124,156,255,.15));box-shadow:inset 3px 0 var(--accent),inset -3px 0 var(--deckb)}
+.deckbadge{display:inline-grid;place-items:center;min-width:19px;height:19px;padding:0 4px;margin-right:6px;border-radius:6px;font-size:11px;font-weight:800;color:#0E0F12;vertical-align:1px}
+.deckbadge.a{background:var(--accent)}.deckbadge.b{background:var(--deckb)}

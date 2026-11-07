@@ -948,27 +948,34 @@ function trackRow(t, list) {
   else if (S.offline.has(t.id)) state = h('span', { class: 'icon-btn state-ok', title: 'Sur l’iPhone', html: iconHTML('check', 20), role: 'img', 'aria-label': 'Sur l’iPhone' });
   else state = h('button', { class: 'icon-btn state-dl', type: 'button', 'aria-label': 'Garder sur l’iPhone', html: iconHTML('download', 20),
     onclick: (e) => { e.stopPropagation(); saveOffline(t); } });
-  const row = h('div', { class: 'track' + (isCur ? ' playing' : '') },
+  const on = decksOf(t);
+  const row = h('div', { class: 'track' + (isCur ? ' playing' : '') + on.map((l) => ' on-' + l.toLowerCase()).join('') },
     h('button', { type: 'button', style: 'display:flex;align-items:center;gap:12px;flex:1;min-width:0;background:none;border:0;padding:0;text-align:left',
       'aria-label': 'Lire ' + t.titre, onclick: () => playTrack(t, list) },
       coverEl(t),
       h('span', { class: 'meta' },
-        h('span', { class: 't1' }, t.titre),
+        h('span', { class: 't1' }, on.map((l) => h('span', { class: 'deckbadge ' + l.toLowerCase(), 'aria-label': 'Sur la platine ' + l }, l)), t.titre),
         h('span', { class: 't2' }, [t.type === 'video' ? 'Clip vidéo' : null, t.artiste, t.duree ? fmtTime(t.duree) : null].filter(Boolean).join(' · ') || t.source || ''))),
     h('span', { class: 'bpm' + (t.bpm ? '' : ' wait') }, t.bpm ? t.bpm : '…'),
     state,
     h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Options', html: iconHTML('more', 20), onclick: () => trackMenu(t) }));
   return row;
 }
+// Sur quelles platines du Mix est ce morceau ? ['A'], ['B'], ['A','B'] ou []
+function decksOf(t) {
+  try { return ['A', 'B'].filter((l) => MIX.decks[l].track && MIX.decks[l].track.id === t.id); }
+  catch (e) { return []; }   // Mix pas encore prêt (démarrage)
+}
 function trackMenu(t) {
+  const on = decksOf(t);
   openSheet(() => h('div', null,
     h('div', { style: 'display:flex;gap:12px;align-items:center;margin-bottom:8px' }, coverEl(t),
       h('div', { class: 'meta', style: 'min-width:0' }, h('div', { class: 't1' }, t.titre), h('div', { class: 't2' }, [t.artiste, t.bpm ? t.bpm + ' BPM' : null].filter(Boolean).join(' · ')))),
     h('button', { class: 'menu-item', type: 'button', onclick: () => { closeSheet(); playTrack(t, [t]); } }, ico('play', 20), 'Lire'),
     t.type === 'audio' ? h('button', { class: 'menu-item', type: 'button', onclick: () => { closeSheet(); MIX.load('A', t); setTab('mix'); } },
-      h('span', { class: 'badge', style: 'width:24px;height:24px;font-size:12px;border-radius:7px;background:var(--accent)' }, 'A'), 'Charger sur la platine A') : null,
+      h('span', { class: 'badge', style: 'width:24px;height:24px;font-size:12px;border-radius:7px;background:var(--accent)' }, 'A'), on.includes('A') ? 'Sur la platine A ✓ (recharger)' : 'Charger sur la platine A') : null,
     t.type === 'audio' ? h('button', { class: 'menu-item', type: 'button', onclick: () => { closeSheet(); MIX.load('B', t); setTab('mix'); } },
-      h('span', { class: 'badge', style: 'width:24px;height:24px;font-size:12px;border-radius:7px;background:var(--deckb)' }, 'B'), 'Charger sur la platine B') : null,
+      h('span', { class: 'badge', style: 'width:24px;height:24px;font-size:12px;border-radius:7px;background:var(--deckb)' }, 'B'), on.includes('B') ? 'Sur la platine B ✓ (recharger)' : 'Charger sur la platine B') : null,
     S.online && t.categorie != null ? h('button', { class: 'menu-item', type: 'button', onclick: () => moveMenu(t) },
       ico('music', 20), 'Ranger dans une catégorie' + (t.categorie ? ' (' + t.categorie + ')' : '')) : null,
     S.online && S.lib.some((x) => x.id === t.id) ? h('button', { class: 'menu-item', type: 'button', onclick: () => renameMenu(t) },
