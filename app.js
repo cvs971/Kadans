@@ -104,7 +104,16 @@ const S = {
 function readHashConfig() {
   const hash = new URLSearchParams(location.hash.slice(1));
   const query = new URLSearchParams(location.search);
-  const src = hash.get('s') ? hash : (query.get('s') ? query : null);
+  let src = hash.get('s') ? hash : (query.get('s') ? query : null);
+  // L'icône de l'écran d'accueil rouvre toujours l'adresse du jour où elle a été ajoutée (?s=…).
+  // On ne s'en sert qu'une fois : sinon, après un redémarrage du PC (nouvelle adresse), elle écraserait
+  // le QR rescanné et l'app resterait « Hors ligne », sans synchronisation.
+  // Donc : seulement si l'app ne connaît encore aucun PC (1re ouverture de l'icône).
+  if (src === query && S.server) {
+    src = null;
+    const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+    history.replaceState(null, '', location.pathname + (standalone ? '' : '?' + new URLSearchParams({ s: S.server, k: S.key })));
+  }
   if (src) {
     const changed = src.get('s').replace(/\/$/, '') !== S.server;
     setServer(src.get('s'), src.get('k') || '');
