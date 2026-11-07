@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0E0F12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kadans">
+<title>Kadans</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <main id="view"></main>
+
+  <div id="mini" class="mini" hidden>
+    <button id="mini-open" class="mini-info" type="button">
+      <span id="mini-cover" class="cover sm"></span>
+      <span class="mini-text"><span id="mini-title" class="t1"></span><span id="mini-artist" class="t2"></span></span>
+    </button>
+    <button id="mini-play" class="icon-btn" type="button" aria-label="Lecture / pause"></button>
+    <div class="mini-progress"><div id="mini-bar"></div></div>
+  </div>
+
+  <nav class="tabs" aria-label="Navigation">
+    <button type="button" data-tab="ajouter"><span class="ico" data-ico="download"></span>Ajouter</button>
+    <button type="button" data-tab="biblio"><span class="ico" data-ico="music"></span>Bibliothèque</button>
+    <button type="button" data-tab="mix"><span class="ico" data-ico="mix"></span>Mix</button>
+    <button type="button" data-tab="reglages"><span class="ico" data-ico="settings"></span>Réglages</button>
+  </nav>
+</div>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-backdrop" data-close></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true"><div id="sheet-body"></div></div>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<audio id="player" preload="auto" playsinline></audio>
+<script src="app.js"></script>
+</body>
+</html>
