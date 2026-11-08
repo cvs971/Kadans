@@ -957,7 +957,7 @@ function renderFolders() {
   box.replaceChildren();
   if (!folders.length && !all.some((t) => t.categorie === '')) return;
   // fil d'Ariane : Tous › Zouk › Années 80
-  const crumb = (f, label) => h('button', { type: 'button', 'aria-current': F === f ? 'page' : null, onclick: () => openFolder(f) }, label);
+  const crumb = (f, label) => h('button', { type: 'button', 'aria-current': F === f ? 'page' : null, 'data-folder': f == null ? null : f, onclick: () => openFolder(f) }, label);
   const crumbs = h('div', { class: 'crumbs' }, crumb(null, 'Tous les dossiers'));
   if (F === '') crumbs.append(h('span', { class: 'sep' }, '›'), crumb('', 'Sans catégorie'));
   else if (F) F.split('/').forEach((seg, i, arr) => crumbs.append(h('span', { class: 'sep' }, '›'), crumb(arr.slice(0, i + 1).join('/'), seg)));
@@ -967,7 +967,7 @@ function renderFolders() {
   const tile = (f, label) => {
     const inside = all.filter((t) => inFolder(t, f));
     const kept = inside.filter((t) => S.offline.has(t.id)).length;
-    return h('button', { class: 'ftile', type: 'button', onclick: () => openFolder(f) },
+    return h('button', { class: 'ftile', type: 'button', 'data-folder': f, onclick: () => openFolder(f) },
       h('span', { class: 'ico', html: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>' }),
       h('span', { class: 'm' }, h('span', { class: 't1' }, label),
         h('span', { class: 't2' }, inside.length + ' morceau' + (inside.length > 1 ? 'x' : '') + (kept ? ' · ' + kept + ' sur l’iPhone' : ''))));
@@ -1023,6 +1023,7 @@ function renderList() {
   if (list.length > max) box.append(h('div', { class: 'empty' }, `+ ${list.length - max} autres : affine ta recherche.`));
 }
 function refreshTrackRows() {
+  if (DRAG.on) return;   // pas de redessin pendant qu'un morceau est en train d'être glissé
   try { refreshRows(); } catch (e) { render(); }   // render() affiche l'erreur au lieu d'un écran vide
 }
 function refreshRows() {
@@ -1047,8 +1048,76 @@ function trackRow(t, list) {
     h('span', { class: 'bpm' + (t.bpm ? '' : ' wait') }, t.bpm ? t.bpm : '…'),
     state,
     h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Options', html: iconHTML('more', 20), onclick: () => trackMenu(t) }));
+  if (S.online && t.categorie != null && S.lib.some((x) => x.id === t.id)) longPressDrag(row, t);
   return row;
 }
+// ------------------------------------------------------------------ ranger un morceau : appui long, puis glisser sur un dossier
+const DRAG = { on: false };
+function longPressDrag(row, t) {
+  let timer = 0, x0 = 0, y0 = 0, ghost = null, over = null, raf = 0, lastY = 0;
+  const view = () => $('#view');
+  const setOver = (el) => {
+    if (over === el) return;
+    if (over) over.classList.remove('drop-over');
+    over = el; if (over) over.classList.add('drop-over');
+  };
+  const autoScroll = () => {   // près du haut ou du bas de l'écran : la liste défile toute seule
+    const v = view(); if (!v || !DRAG.on) return;
+    const top = v.getBoundingClientRect().top, bottom = v.getBoundingClientRect().bottom;
+    if (lastY < top + 90) v.scrollTop -= 12; else if (lastY > bottom - 70) v.scrollTop += 12;
+    raf = requestAnimationFrame(autoScroll);
+  };
+  const begin = () => {
+    DRAG.on = true;
+    ghost = h('div', { class: 'drag-ghost' }, '♪ ' + (t.titre || '?'));
+    document.body.append(ghost);
+    row.classList.add('dragging'); document.body.classList.add('drag-on');
+    place(x0, y0);
+    raf = requestAnimationFrame(autoScroll);
+    toast('Glisse sur un dossier, puis lâche', 1800);
+  };
+  const place = (x, y) => {
+    lastY = y;
+    ghost.style.transform = `translate(${x - 20}px, ${y - 54}px)`;
+    const el = document.elementFromPoint(x, y);
+    setOver(el && el.closest('[data-folder]'));
+  };
+  const end = async (drop) => {
+    clearTimeout(timer);
+    if (!DRAG.on) return;
+    DRAG.on = false; cancelAnimationFrame(raf);
+    const target = over; setOver(null);
+    if (ghost) ghost.remove(); ghost = null;
+    row.classList.remove('dragging'); document.body.classList.remove('drag-on');
+    // le relâchement ne doit pas lancer la lecture du morceau
+    const stop = (e) => { e.stopPropagation(); e.preventDefault(); };
+    row.addEventListener('click', stop, { capture: true, once: true }); setTimeout(() => row.removeEventListener('click', stop, { capture: true }), 400);
+    if (!drop || !target) { refreshTrackRows(); return; }
+    const cat = target.getAttribute('data-folder');
+    if (cat === t.categorie) { toast('Il est déjà dans ce dossier'); refreshTrackRows(); return; }
+    try {
+      await api('/api/ranger', { method: 'POST', json: { ids: [t.id], categorie: cat } });
+      const m = S.offline.get(t.id); if (m) { m.categorie = cat; DB.putMeta(m); }
+      await refreshLibrary(); refreshTrackRows();
+      toast('Rangé dans « ' + (cat ? cat.split('/').pop() : 'Sans catégorie') + ' » ✓');
+    } catch (e) { toast(e.message); refreshTrackRows(); }
+  };
+  row.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+    clearTimeout(timer); timer = setTimeout(begin, 450);
+  }, { passive: true });
+  row.addEventListener('touchmove', (e) => {
+    const p = e.touches[0];
+    if (!DRAG.on) { if (Math.hypot(p.clientX - x0, p.clientY - y0) > 10) clearTimeout(timer); return; }   // on fait défiler : pas de glisser
+    e.preventDefault();
+    place(p.clientX, p.clientY);
+  }, { passive: false });
+  row.addEventListener('touchend', () => end(true));
+  row.addEventListener('touchcancel', () => end(false));
+  row.addEventListener('contextmenu', (e) => { if (DRAG.on || timer) e.preventDefault(); });
+}
+
 // Sur quelles platines du Mix est ce morceau ? ['A'], ['B'], ['A','B'] ou []
 function decksOf(t) {
   try { return ['A', 'B'].filter((l) => MIX.decks[l].track && MIX.decks[l].track.id === t.id); }
