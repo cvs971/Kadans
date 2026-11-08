@@ -426,3 +426,9 @@ body.mix-land .hc{height:28px;font-size:12px;border-radius:7px}
 body.mix-land .deck-ctrl .btn.hp{width:32px;height:32px}
 body.mix-tall .deck-ctrl .btn.hp{flex:1;width:auto}
 body.mix-land .hp-row{flex:1 1 100%}
+
+/* logo Kadans (image du couple qui danse) */
+.logo-img{display:block;flex:none;border-radius:22%;object-fit:cover}
+.lock .logo-img.lock-logo{width:64px;height:64px;border-radius:15px;margin-bottom:4px;box-shadow:0 8px 22px rgba(0,0,0,.35)}
+.pg-foot .logo-img{border-radius:5px}
+.lock .logo-img.lock-logo{background:none}

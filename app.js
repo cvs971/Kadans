@@ -296,7 +296,7 @@ function unlock(pcSaysCode = false) {
     const showDots = () => dots.querySelectorAll('span').forEach((d, i) => d.classList.toggle('on', i < inp.value.length));
     const box = h('div', { class: 'lock' },
       h('div', { class: 'lock-card' },
-        h('span', { class: 'logo lock-logo', html: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0E0F12" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 6v12M12 9v6M16 4v16M20 10v4"/></svg>' }),
+        logoImg(64, 'lock-logo'),
         h('h1', null, 'Bon retour'),
         h('p', { class: 'sub' }, 'Entre ton code d’accès à 6 chiffres'),
         h('div', { class: 'lock-pin' }, dots, inp), err, go),
@@ -1021,12 +1021,14 @@ function uiGroup(label, rows, note) {
     h('div', { class: 'ui-group' }, rows.filter(Boolean)),
     note ? h('p', { class: 'ui-note' }, note) : null);
 }
+// le logo Kadans (couple qui danse) en image, à la taille voulue
+const logoImg = (px, cls = '') => h('img', { class: 'logo-img ' + cls, src: 'icon-192.png', width: px, height: px, alt: '' });
 const LOGO_SVG = (s, c = '#0E0F12') => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 6v12M12 9v6M16 4v16M20 10v4"/></svg>`;
 
 function viewAdd() {
   const wrap = h('div', { class: 'pg' });
   wrap.append(h('header', { class: 'pg-top' },
-    h('div', { class: 'brand' }, h('span', { class: 'logo', html: LOGO_SVG(16) }), h('b', null, 'Kadans')),
+    h('div', { class: 'brand' }, logoImg(30), h('b', null, 'Kadans')),
     statusPill()));
   wrap.append(h('div', { class: 'pg-hero' },
     h('h1', null, 'Ajouter de la musique'),
@@ -2456,7 +2458,7 @@ function viewSettings() {
         h('li', null, h('span', { class: 'pg-num' }, '2'), h('span', null, 'Touche ', h('b', null, 'Partager'), ' (carré avec une flèche)')),
         h('li', null, h('span', { class: 'pg-num' }, '3'), h('span', null, h('b', null, 'Sur l’écran d’accueil'), ', puis Ajouter')))),
     ]),
-    h('p', { class: 'pg-foot' }, h('span', { class: 'logo', html: LOGO_SVG(11) }), 'Kadans 1.6 · usage personnel'));
+    h('p', { class: 'pg-foot' }, logoImg(20), 'Kadans 1.6 · usage personnel'));
 }
 
 // ------------------------------------------------------------------ démarrage
@@ -2510,7 +2512,7 @@ function scanGate() {
     } }, h('span', { class: 'ico', html: iconHTML('qr', 20) }), 'Scanner le QR code');
     const box = h('div', { class: 'lock gate' },
       h('div', { class: 'lock-card' },
-        h('span', { class: 'logo lock-logo', html: LOGO_SVG(26) }),
+        logoImg(64, 'lock-logo'),
         h('h1', null, 'Kadans'),
         h('p', { class: 'sub' }, 'Scanne le QR code affiché sur ton PC (onglet Mobile)'),
         scan),
