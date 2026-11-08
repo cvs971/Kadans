@@ -1442,6 +1442,7 @@ function playNext(dir = 1) {
 }
 player.addEventListener('ended', () => playNext(1));
 player.addEventListener('play', updateMini);
+['play', 'pause', 'ended', 'emptied'].forEach((ev) => player.addEventListener(ev, () => updateAwake()));   // emptied : bouton ✕ (lecteur vidé)
 player.addEventListener('pause', updateMini);
 player.addEventListener('timeupdate', () => {
   const bar = $('#mini-bar');
@@ -1621,6 +1622,43 @@ $('#sheet').addEventListener('click', (e) => { if (e.target.hasAttribute('data-c
   panel.addEventListener('touchcancel', end);
 })();
 
+// ---- anneau de LED autour d'une platine : vertes qui tournent au tempo quand elle joue, rouges à l'arrêt
+function ledSize(r) { return Math.max(1.6, r * 0.022); }
+function drawLeds(g, r, state, beatHz) {
+  const n = r > 110 ? 48 : 36, s = ledSize(r), rr = r - s - 1.5, now = performance.now() / 1000;
+  const on = state === 'play' ? '#3BEA7E' : '#FF4A4A';
+  for (let i = 0; i < n; i++) {
+    const a = i / n * 2 * Math.PI - Math.PI / 2;
+    let k;
+    if (state === 'play') {   // 2 traînées lumineuses qui tournent (1 tour = 8 temps)
+      const x = (((i / n - now * beatHz / 8) * 2) % 1 + 1) % 1;
+      k = 0.18 + 0.82 * Math.pow(1 - x, 2.4);
+    } else k = state === 'stop' ? 0.9 : 0.28;   // morceau chargé à l'arrêt : rouge vif ; platine vide : rouge éteint
+    g.globalAlpha = k;
+    g.shadowColor = on; g.shadowBlur = k > 0.5 ? s * 3 : 0;
+    g.fillStyle = on;
+    g.beginPath(); g.arc(r + Math.cos(a) * rr, r + Math.sin(a) * rr, s, 0, 7); g.fill();
+  }
+  g.globalAlpha = 1; g.shadowBlur = 0;
+}
+
+// ---- écran toujours allumé pendant la musique : sinon l'iPhone se met en veille et coupe les platines
+const AWAKE = { lock: null, asking: false };
+async function updateAwake() {
+  const playing = !player.paused || Object.values(MIX.decks).some((d) => d.el && !d.el.paused);
+  if (playing && !AWAKE.lock && !AWAKE.asking && navigator.wakeLock && document.visibilityState === 'visible') {
+    AWAKE.asking = true;
+    try {
+      AWAKE.lock = await navigator.wakeLock.request('screen');
+      AWAKE.lock.addEventListener('release', () => { AWAKE.lock = null; });
+    } catch (e) { /* refusé (économie d'énergie…) : on réessaiera au prochain lancement */ }
+    AWAKE.asking = false;
+  } else if (!playing && AWAKE.lock && !SYNC.running) {
+    const l = AWAKE.lock; AWAKE.lock = null;
+    l.release().catch(() => {});
+  }
+}
+
 // ------------------------------------------------------------------ Mix : 2 platines
 const MIX = {
   ctx: null, master: null, recDest: null, xf: 0.5, recorder: null, recChunks: [], autoTimer: null,
@@ -1652,6 +1690,7 @@ const MIX = {
         d.el.addEventListener('playing', () => this.checkStream(d));
         d.el.addEventListener('error', () => this.onError(d));
         d.el.addEventListener('play', () => this.updateButtons());
+        ['play', 'pause', 'ended'].forEach((ev) => d.el.addEventListener(ev, () => updateAwake()));
         d.el.addEventListener('pause', () => this.updateButtons());
       }
       this.applyXf();
@@ -2048,13 +2087,15 @@ const MIX = {
     if (c.width !== Math.round(w * dpr)) { c.width = c.height = Math.round(w * dpr); }
     const g = c.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, w);
-    const r = w / 2, R = r * 0.9;
+    const r = w / 2, P = r - 2 * ledSize(r) - 3, R = Math.min(r * 0.9, P - 2);   // P : plateau (les LED tout autour)
     if (d.el && !d.el.paused && !d.held) d.angle += dt * (2 * Math.PI * 33.333 / 60) * d.el.playbackRate;
-    g.fillStyle = '#1C1E23'; g.beginPath(); g.arc(r, r, r - 1, 0, 7); g.fill();
+    // LED : vertes en lecture, rouges à l'arrêt
+    drawLeds(g, r, d.el && !d.el.paused ? 'play' : d.track ? 'stop' : 'vide', d.track && d.track.bpm ? d.track.bpm * this.rate(d) / 60 : 2);
+    g.fillStyle = '#1C1E23'; g.beginPath(); g.arc(r, r, P, 0, 7); g.fill();
     for (let i = 0; i < 60; i++) {   // points stroboscopiques
       const a = i / 60 * 2 * Math.PI + d.angle;
       g.fillStyle = i % 2 ? '#3A3E47' : '#5A5E68';
-      g.fillRect(r + Math.cos(a) * (r - 5) - 1, r + Math.sin(a) * (r - 5) - 1, 2, 2);
+      g.fillRect(r + Math.cos(a) * (P - 4) - 1, r + Math.sin(a) * (P - 4) - 1, 2, 2);
     }
     g.save(); g.translate(r, r); g.rotate(d.angle);
     const vg = g.createRadialGradient(0, 0, R * 0.3, 0, 0, R);
@@ -2315,7 +2356,7 @@ function viewSettings() {
 // ------------------------------------------------------------------ démarrage
 document.querySelectorAll('.tabs [data-ico]').forEach((s) => { s.innerHTML = iconHTML(s.dataset.ico, 22); });
 document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { probeWifi(true); tick(true); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { probeWifi(true); tick(true); updateAwake(); } });
 window.addEventListener('hashchange', async () => {
   if (readHashConfig()) { toast('PC relié ✓'); await checkServer(); await refreshLibrary(); render(); }
 });
