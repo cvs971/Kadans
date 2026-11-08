@@ -432,3 +432,21 @@ body.mix-land .hp-row{flex:1 1 100%}
 .lock .logo-img.lock-logo{width:64px;height:64px;border-radius:15px;margin-bottom:4px;box-shadow:0 8px 22px rgba(0,0,0,.35)}
 .pg-foot .logo-img{border-radius:5px}
 .lock .logo-img.lock-logo{background:none}
+
+/* ---- couleurs premium : surfaces neutres, couleur en petites touches ---- */
+:root{--deckA:#E58A62;--deckb:#8FA3D9}
+.badge[style*="--dk"]{background:color-mix(in srgb,var(--dk) 16%,transparent);color:var(--dk);border:1px solid color-mix(in srgb,var(--dk) 38%,transparent)}
+.deck-play[style*="--dk"]{background:color-mix(in srgb,var(--dk) 14%,#1D1F25);color:var(--dk);border:1px solid color-mix(in srgb,var(--dk) 42%,transparent)}
+.hc{border-color:color-mix(in srgb,var(--c) 30%,transparent);color:color-mix(in srgb,var(--c) 75%,#E8E6E1)}
+.hc.set{background:color-mix(in srgb,var(--c) 20%,#1D1F25);color:var(--c);border-color:color-mix(in srgb,var(--c) 55%,transparent)}
+.deck-ctrl .btn.hp.on{background:rgba(168,147,214,.16);color:#CDBDF0;border-color:rgba(168,147,214,.45)}
+.hp-row input{accent-color:#A893D6}
+.hp-row.on{color:#CDBDF0}
+.ico-btn{color:#C9C7C2}
+.chip[aria-pressed="true"]{background:rgba(255,255,255,.1);color:var(--text);border-color:rgba(255,255,255,.26)}
+.chip.accent[aria-pressed="true"]{background:rgba(255,122,69,.14);color:#F2A27F;border-color:rgba(255,122,69,.45)}
+.deckbadge.a{background:color-mix(in srgb,var(--deckA) 22%,transparent);color:var(--deckA)}
+.deckbadge.b{background:color-mix(in srgb,var(--deckb) 22%,transparent);color:var(--deckb)}
+.track.on-a{background:color-mix(in srgb,var(--deckA) 9%,transparent);box-shadow:inset 2px 0 var(--deckA)}
+.track.on-b{background:color-mix(in srgb,var(--deckb) 10%,transparent);box-shadow:inset 2px 0 var(--deckb)}
+.track.on-a.on-b{background:linear-gradient(90deg,color-mix(in srgb,var(--deckA) 9%,transparent),color-mix(in srgb,var(--deckb) 10%,transparent));box-shadow:inset 2px 0 var(--deckA),inset -2px 0 var(--deckb)}

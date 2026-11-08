@@ -1665,8 +1665,8 @@ async function updateAwake() {
 const MIX = {
   ctx: null, master: null, recDest: null, xf: 0.5, recorder: null, recChunks: [], autoTimer: null,
   decks: {
-    A: { letter: 'A', color: 'var(--accent)', hex: '#FF7A45', el: null, node: null, gain: null, track: null, peaks: null, tempo: 0, cue: 0, url: null, angle: 0, bend: 0, held: false, coverImg: null },
-    B: { letter: 'B', color: 'var(--deckb)', hex: '#7C9CFF', el: null, node: null, gain: null, track: null, peaks: null, tempo: 0, cue: 0, url: null, angle: 0, bend: 0, held: false, coverImg: null },
+    A: { letter: 'A', color: 'var(--deckA)', hex: '#E58A62', el: null, node: null, gain: null, track: null, peaks: null, tempo: 0, cue: 0, url: null, angle: 0, bend: 0, held: false, coverImg: null },
+    B: { letter: 'B', color: 'var(--deckb)', hex: '#8FA3D9', el: null, node: null, gain: null, track: null, peaks: null, tempo: 0, cue: 0, url: null, angle: 0, bend: 0, held: false, coverImg: null },
   },
   ui: {},
   ensure() {
@@ -1721,7 +1721,7 @@ const MIX = {
     toast(d.pfl ? 'Platine ' + letter + ' en pré-écoute 🎧 (règle « Pré-écoute ↔ Mix » sous le crossfader)' : 'Pré-écoute ' + letter + ' coupée', 2200);
   },
   // ---- 3 hot cues par platine (gardés pour chaque morceau sur ce téléphone)
-  HC_COLORS: ['#FF6B6B', '#FFD54A', '#5BD69A'],
+  HC_COLORS: ['#D9777A', '#D6BE72', '#86C29C'],   // désaturées
   savedCues(id) {
     try { const c = JSON.parse(localStorage.getItem('kadans.hotcues') || '{}')[id]; return Array.isArray(c) && c.length === 3 ? c : [null, null, null]; }
     catch (e) { return [null, null, null]; }
@@ -1866,7 +1866,7 @@ const MIX = {
     fill('');
     openSheet(() => h('div', null,
       h('div', { style: 'display:flex;align-items:center;gap:10px;margin-bottom:10px' },
-        h('span', { class: 'badge', style: 'background:' + this.decks[letter].color }, letter),
+        h('span', { class: 'badge', style: '--dk:' + this.decks[letter].hex }, letter),
         h('h2', { style: 'margin:0;font-size:18px' }, 'Charger sur la platine ' + letter)),
       h('div', { class: 'search' }, h('span', { html: iconHTML('search', 18), style: 'color:#A3A3AD' }), q),
       list));
@@ -2034,7 +2034,7 @@ const MIX = {
       d.el.currentTime = Math.max(0, Math.min(1, along(e, wave))) * d.el.duration;
     });
     this.ui['canvas' + d.letter] = canvas;
-    const play = h('button', { class: 'deck-play', type: 'button', style: 'background:' + d.color, 'aria-label': 'Lecture platine ' + d.letter,
+    const play = h('button', { class: 'deck-play', type: 'button', style: '--dk:' + d.hex, 'aria-label': 'Lecture platine ' + d.letter,
       html: iconHTML(d.el && !d.el.paused ? 'pause' : 'play', 20), onclick: () => this.togglePlay(d.letter) });
     this.ui['play' + d.letter] = play;
     const id = 'tempo' + d.letter;
@@ -2060,8 +2060,8 @@ const MIX = {
     const platter = h('div', { class: 'platter', 'aria-label': 'Disque de la platine ' + d.letter }, disc);
     d.disc = disc;
     this.platterEvents(d, platter);
-    const rew = h('button', { class: 'btn small', type: 'button', 'aria-label': 'Reculer (maintenir)' }, '⏪');
-    const ff = h('button', { class: 'btn small', type: 'button', 'aria-label': 'Avancer vite (maintenir)' }, '⏩');
+    const rew = h('button', { class: 'btn small ico-btn', type: 'button', 'aria-label': 'Reculer (maintenir)', html: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 6v12L3 12zM21 6v12l-8-6z"/></svg>' });
+    const ff = h('button', { class: 'btn small ico-btn', type: 'button', 'aria-label': 'Avancer vite (maintenir)', html: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 6v12l8-6zM13 6v12l8-6z"/></svg>' });
     this.holdSearch(d, rew, -1); this.holdSearch(d, ff, 1);
     // − / + : baissent ou montent le tempo de 0,1 % par appui (en continu si on garde le doigt)
     const brake = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Baisser le tempo' }, '−');
@@ -2074,7 +2074,7 @@ const MIX = {
     this.holdStep(brake, () => stepTempo(-1)); this.holdStep(push, () => stepTempo(1));
     return h('div', { class: 'deck' },
       h('div', { class: 'deck-head' },
-        h('span', { class: 'badge', style: 'background:' + d.color }, d.letter),
+        h('span', { class: 'badge', style: '--dk:' + d.hex }, d.letter),
         this.ui['vol' + d.letter] = h('span', { class: 'deck-vol', 'aria-label': 'Volume de la platine ' + d.letter }, 'Vol ' + this.vol(d.letter) + ' %'),
         h('div', { class: 'meta', style: 'flex:1;min-width:0;display:flex;flex-direction:column;gap:2px' },
           h('span', { class: 't1' }, t ? t.titre : 'Platine vide'),
