@@ -183,11 +183,16 @@ function probeWifi(force) {
       try {
         const r = await fetch(url + '/api/etat', { headers: { 'x-kadans-cle': S.key, ...(LOCK.jeton ? { 'x-kadans-jeton': LOCK.jeton } : {}) }, signal: ctrl.signal, cache: 'no-store' });
         if (r.ok && (r.headers.get('content-type') || '').includes('json')) { found = url; break; }
-      } catch (e) { /* pas à la maison, ou certificat pas encore installé */ }
+        WIFI.err = 'le PC a répondu ' + r.status;
+      } catch (e) {   // pas à la maison, ou certificat pas encore activé
+        WIFI.err = e.name === 'AbortError' ? 'pas de réponse du PC sur ' + ip + ' (téléphone sur un autre Wi-Fi ou en 4G/5G ?)'
+          : 'connexion refusée par le téléphone (certificat Kadans pas activé dans Réglages des certificats ?)';
+      }
       finally { clearTimeout(t); }
     }
     const changed = found !== WIFI.base;
     WIFI.base = found;
+    if (found) WIFI.err = '';
     if (changed) { updatePill(); if (S.tab === 'reglages') render(); }
   })().finally(() => { wifiProbing = null; });
   return wifiProbing;
@@ -1644,6 +1649,7 @@ const MIX = {
         d.node.connect(d.gain).connect(this.master);
         d.node.connect(d.an);
         d.el.addEventListener('playing', () => this.checkStream(d));
+        d.el.addEventListener('error', () => this.onError(d));
         d.el.addEventListener('play', () => this.updateButtons());
         d.el.addEventListener('pause', () => this.updateButtons());
       }
@@ -1693,7 +1699,7 @@ const MIX = {
       if (coverSrc) { d.coverImg = new Image(); d.coverImg.src = coverSrc; }
       if (S.tab === 'mix') this.mount();
       // forme d'onde en arrière-plan : le fichier est lu en mémoire puis oublié (rien n'est gardé)
-      d.blobP = local ? Promise.resolve(local) : fetchWithProgress(fileURL(t.id), () => {});
+      d.blobP = local ? Promise.resolve(local) : this.fetchFor(d, t);
       const blob = await d.blobP;
       if (d.track !== t) return;
       const buf = await this.ctx.decodeAudioData(await blob.arrayBuffer());
@@ -1716,14 +1722,7 @@ const MIX = {
       if (buf.some((v) => Math.abs(v) > 1e-4)) { d.heard = true; clearInterval(iv); d.checking = false; return; }
       if (++n < 15 || d.el.currentTime - t0 < 1.5) return;
       clearInterval(iv); d.checking = false;
-      try {
-        const blob = await (d.blobP || fetchWithProgress(fileURL(t.id), () => {}));
-        if (d.track !== t) return;
-        const pos = d.el.currentTime, playing = !d.el.paused;
-        d.stream = false; d.url = URL.createObjectURL(blob); d.el.src = d.url; d.el.currentTime = pos;
-        d.el.playbackRate = this.rate(d) * (1 + d.bend);
-        if (playing) d.el.play();
-      } catch (e) { /* on garde le flux */ }
+      this.toMemory(d, 'pas de son dans la table de mixage', !d.el.paused);
     }, 200);
   },
   // choisir un morceau directement depuis l'écran Mix
@@ -1770,7 +1769,59 @@ const MIX = {
     this.ensure();
     const d = this.decks[letter];
     if (!d.track) { toast('Charge d’abord un morceau (bouton « … » dans la Bibliothèque).'); return; }
-    if (d.el.paused) { player.pause(); d.el.play(); } else d.el.pause();
+    if (d.el.paused) {
+      player.pause();
+      const wasStream = d.stream, src = d.el.src;
+      const p = d.el.play();
+      if (p && p.catch) p.catch((e) => {
+        if (e && e.name === 'AbortError') return;   // remplacé par un autre morceau
+        if (d.el.src !== src) return;               // déjà passé en mémoire entre-temps : cette erreur est périmée
+        if (wasStream) this.toMemory(d, 'lecture refusée : ' + ((e && (e.message || e.name)) || '?'), true);
+        else toast('Platine ' + d.letter + ' : lecture impossible (' + ((e && (e.message || e.name)) || '?') + ')', 5000);
+      });
+    } else d.el.pause();
+  },
+  // explication lisible d'une erreur de lecture
+  mediaErr(el) {
+    const e = el && el.error;
+    if (!e) return 'erreur inconnue';
+    const txt = { 1: 'interrompue', 2: 'problème de réseau', 3: 'fichier illisible', 4: 'format ou accès refusé' }[e.code] || 'code ' + e.code;
+    return txt + (e.message ? ' — ' + e.message : '');
+  },
+  onError(d) {
+    if (!d.track || !d.el.getAttribute('src')) return;
+    if (d.stream) this.toMemory(d, this.mediaErr(d.el), !d.el.paused || d.wantPlay);
+    else toast('Platine ' + d.letter + ' : ' + this.mediaErr(d.el), 6000);
+  },
+  // la lecture en direct ne marche pas sur ce téléphone : on charge le morceau en mémoire (rien n'est gardé)
+  async toMemory(d, why, play) {
+    if (!d.stream || d.toMem) return;
+    d.toMem = true;
+    const t = d.track, pos = d.el.currentTime || 0;
+    toast('Platine ' + d.letter + ' : lecture directe impossible (' + why + '). Chargement du morceau…', 4500);
+    try {
+      const blob = await (d.blobP || (d.blobP = this.fetchFor(d, t)));
+      if (d.track !== t) return;
+      d.stream = false; d.url = URL.createObjectURL(blob); d.el.src = d.url;
+      try { d.el.currentTime = pos; } catch (e) { /* début */ }
+      d.el.playbackRate = this.rate(d) * (1 + d.bend);
+      this.showLoad(d, null);
+      toast('Platine ' + d.letter + ' prête ✓', 1800);
+      if (play) d.el.play().catch((e) => toast('Platine ' + d.letter + ' : touche ▶ pour lancer (' + (e.message || e.name) + ')', 4000));
+    } catch (e) {
+      this.showLoad(d, null);
+      toast('Platine ' + d.letter + ' : impossible de charger le morceau (' + e.message + ')', 7000);
+    } finally { d.toMem = false; }
+  },
+  // téléchargement en mémoire, avec la progression sous le titre de la platine
+  fetchFor(d, t) {
+    return fetchWithProgress(fileURL(t.id), (p) => { if (d.track === t) this.showLoad(d, p); });
+  },
+  showLoad(d, p) {
+    const el = document.getElementById('time' + d.letter);
+    if (!el) return;
+    if (p == null || p >= 100) { if (el.dataset.loading) { delete el.dataset.loading; el.textContent = d.track ? (d.track.artiste || '') : ''; } return; }
+    el.dataset.loading = '1'; el.textContent = 'Chargement ' + p + ' %';
   },
   cue(letter) {
     const d = this.decks[letter];
@@ -2195,6 +2246,14 @@ function wifiHelp() {
       step(3, ['Puis ', h('b', null, 'Réglages → Général → Informations → Réglages des certificats'), ' : active ', h('b', null, '« Kadans - Wi-Fi de la maison »'), '.']),
       step(4, ['Reviens dans Kadans, sur le Wi-Fi de la maison.'])),
     h('p', { class: 'ui-note', style: 'margin:0' }, 'Ce certificat ne marche que pour les adresses du réseau de la maison : il ne sert pour aucun site Internet.'),
+    // diagnostic : ce que le téléphone a constaté au dernier essai
+    !WIFI.base ? h('div', { class: 'pg-alert', style: 'background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.1)' },
+      h('div', null, h('b', null, 'Diagnostic'),
+        h('span', null, !WIFI.info ? 'Le PC n’a pas encore indiqué son adresse Wi-Fi (Kadans 1.5 ou plus sur le PC, connexion mobile ouverte).'
+          : 'Adresse du PC : ' + WIFI.info.ips.join(', ') + ' (port ' + WIFI.info.port + '). Dernier essai : ' + (WIFI.err || 'pas encore essayé') + '.'))) : null,
+    WIFI.info && !WIFI.base ? h('p', { class: 'ui-note', style: 'margin:0' }, 'Test dans Safari : ouvre ',
+      h('a', { href: 'https://' + WIFI.info.ips[0] + ':' + WIFI.info.port + '/api/etat', target: '_blank', rel: 'noopener', style: 'color:#FF8A57' }, 'https://' + WIFI.info.ips[0] + ':' + WIFI.info.port + '/api/etat'),
+      '. « Clé d’accès manquante » = tout va bien ; « connexion non privée » = certificat à activer ; rien ne charge = pas sur le Wi-Fi de la maison.') : null,
     h('div', { style: 'display:flex;gap:8px;justify-content:flex-end' }, check)));
 }
 
