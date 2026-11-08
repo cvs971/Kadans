@@ -208,8 +208,6 @@ body.sheet-over-lock #sheet{z-index:300}
 .xf-btns{display:flex;gap:8px;justify-content:center}
 .rec-land{display:none}
 body.mix-land #app{max-width:none}
-/* téléphone tenu à la verticale : l'écran Mix pivote de 90° (il suffit de tourner le téléphone) */
-body.mix-rot #app{position:fixed;top:0;left:0;width:100vh;height:100vw;transform-origin:top left;transform:rotate(90deg) translateY(-100%)}
 body.mix-land #mini{display:none !important}
 body.mix-land #view{padding:max(8px,var(--safe-t)) max(12px,env(safe-area-inset-right,0px)) 6px max(12px,env(safe-area-inset-left,0px))}
 body.mix-land .mixtop,body.mix-land .mixhelp{display:none}
@@ -237,10 +235,34 @@ body.mix-land .rec-land{display:inline-flex;align-items:center;gap:6px}
 body.mix-land .tabs{padding:2px 8px max(2px,var(--safe-b))}
 body.mix-land .tabs button{min-height:32px;font-size:10px;gap:1px}
 body.mix-land .tabs .ico svg{width:18px;height:18px}
-/* la fenêtre du bas (choix d'un morceau…) pivote avec l'écran Mix */
-body.mix-rot #sheet{inset:auto;top:0;left:0;width:100vh;height:100vw;transform-origin:top left;transform:rotate(90deg) translateY(-100%)}
-body.mix-rot .sheet-panel{max-height:92vw}
 body.mix-land .deck-load{width:30px;height:30px}
 /* lecteur plein écran : fermer (la musique continue) / arrêter */
 .full-top{display:flex;justify-content:space-between;align-items:center;margin:-6px -4px -8px}
 .full-top .btn .ico{display:inline-grid;margin-right:4px}
+/* --- Mix téléphone tenu droit : 2 platines étroites côte à côte --- */
+body.mix-tall .mixgrid{gap:6px}
+body.mix-tall #view{padding-left:max(6px,env(safe-area-inset-left,0px));padding-right:max(6px,env(safe-area-inset-right,0px))}
+body.mix-tall .deck{grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "plat" "wave" "ctrl" "trans";padding:8px 7px;gap:7px}
+body.mix-tall .deck-head{flex-wrap:wrap;gap:4px 6px}
+body.mix-tall .deck-head .meta{flex:1 1 100% !important;order:3}
+body.mix-tall .big-bpm{margin-left:auto}
+body.mix-tall .platter{width:min(100%,170px);justify-self:center}
+body.mix-tall .wave{height:30px}
+body.mix-tall .deck-ctrl{flex-wrap:wrap;justify-content:space-between}
+body.mix-tall .deck-ctrl .btn{flex:1;padding:0 4px}
+body.mix-tall .tempo{flex:1 1 100%}
+body.mix-tall .transport{justify-content:center;gap:4px}
+body.mix-tall .transport .btn.small{min-width:0;flex:1 1 20%;padding:0 2px}
+body.mix-tall .transport .bend{margin-left:0;flex:1 1 100%;gap:4px}
+body.mix-tall .transport .bend .btn{flex:1;width:auto}
+body.mix-tall .xfader{flex-wrap:wrap;gap:6px 10px}
+body.mix-tall .xf-row{flex:1 1 100%}
+body.mix-tall .xf-btns{flex:1;justify-content:space-between}
+/* volumes en chiffres */
+.deck-vol{font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.xf-row{display:flex;align-items:center;gap:10px}
+.xf-row input{flex:1;min-width:0}
+.xf-vol{font-size:13px;font-weight:700;min-width:52px;white-space:nowrap;font-variant-numeric:tabular-nums}
+body.mix-land .xf-row{flex:1}
+body.mix-tall .deck-vol{font-size:11px}
+.transport .btn,.deck-ctrl .btn{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation}

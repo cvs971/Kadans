@@ -810,21 +810,19 @@ function setTab(tab) {
   render();
   $('#view').scrollTop = 0;
 }
-// ---- Mix en paysage : vraie rotation si le système le permet (Android), sinon l'écran Mix pivote de 90°
-// tout seul quand le téléphone est tenu à la verticale (iPhone : une app web ne peut pas forcer la rotation).
+// ---- Mix : les deux platines côte à côte, en paysage comme téléphone tenu droit (version étroite)
 const LAND = matchMedia('(orientation: landscape)');
 function mixOrientation() {
   const mix = S.tab === 'mix';
   document.body.classList.toggle('mix-land', mix);
-  document.body.classList.toggle('mix-rot', mix && !LAND.matches);
-  try { if (mix && screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (e) { /* non pris en charge */ }
-  try { if (!mix && screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) { /* idem */ }
+  // téléphone tenu droit : pas de rotation, les deux platines restent côte à côte en version étroite
+  document.body.classList.toggle('mix-tall', mix && !LAND.matches);
 }
 LAND.addEventListener ? LAND.addEventListener('change', mixOrientation) : LAND.addListener(mixOrientation);
-// position horizontale (0 à 1) d'un doigt sur un élément, même quand l'écran Mix est pivoté
+// position horizontale (0 à 1) d'un doigt sur un élément
 function along(e, el) {
   const r = el.getBoundingClientRect();
-  return document.body.classList.contains('mix-rot') ? (e.clientY - r.top) / r.height : (e.clientX - r.left) / r.width;
+  return (e.clientX - r.left) / r.width;
 }
 function render() {
   const v = $('#view');
@@ -1470,6 +1468,16 @@ const MIX = {
       this.decks.A.gain.gain.value = Math.cos(x * Math.PI / 2);
       this.decks.B.gain.gain.value = Math.sin(x * Math.PI / 2);
     }
+    this.showVol();
+  },
+  // volume de chaque platine en % (selon le crossfader)
+  vol(letter) { return Math.round(100 * (letter === 'A' ? Math.cos(this.xf * Math.PI / 2) : Math.sin(this.xf * Math.PI / 2))); },
+  showVol() {
+    for (const l of ['A', 'B']) {
+      const v = this.vol(l);
+      if (this.ui['vol' + l] && this.ui['vol' + l].isConnected) this.ui['vol' + l].textContent = 'Vol ' + v + ' %';
+      if (this.ui['xvol' + l] && this.ui['xvol' + l].isConnected) this.ui['xvol' + l].textContent = l + ' ' + v + ' %';
+    }
   },
   rate(d) { return 1 + d.tempo / 100; },
   effBpm(d) { return d.track && d.track.bpm ? (d.track.bpm * this.rate(d)).toFixed(1).replace('.0', '') : '—'; },
@@ -1660,12 +1668,19 @@ const MIX = {
     const rew = h('button', { class: 'btn small', type: 'button', 'aria-label': 'Reculer (maintenir)' }, '⏪');
     const ff = h('button', { class: 'btn small', type: 'button', 'aria-label': 'Avancer vite (maintenir)' }, '⏩');
     this.holdSearch(d, rew, -1); this.holdSearch(d, ff, 1);
-    const brake = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Freiner (maintenir)' }, '−');
-    const push = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Pousser (maintenir)' }, '+');
-    this.holdBend(d, brake, -0.06); this.holdBend(d, push, 0.06);
+    // − / + : baissent ou montent le tempo de 0,1 % par appui (en continu si on garde le doigt)
+    const brake = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Baisser le tempo' }, '−');
+    const push = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Monter le tempo' }, '+');
+    const stepTempo = (dir) => {
+      const v = Math.max(-16, Math.min(16, Math.round((d.tempo + dir * 0.1) * 10) / 10));
+      if (v === d.tempo) return;
+      slider.value = v; slider.oninput();
+    };
+    this.holdStep(brake, () => stepTempo(-1)); this.holdStep(push, () => stepTempo(1));
     return h('div', { class: 'deck' },
       h('div', { class: 'deck-head' },
         h('span', { class: 'badge', style: 'background:' + d.color }, d.letter),
+        this.ui['vol' + d.letter] = h('span', { class: 'deck-vol', 'aria-label': 'Volume de la platine ' + d.letter }, 'Vol ' + this.vol(d.letter) + ' %'),
         h('div', { class: 'meta', style: 'flex:1;min-width:0;display:flex;flex-direction:column;gap:2px' },
           h('span', { class: 't1' }, t ? t.titre : 'Platine vide'),
           h('span', { class: 't2', id: 'time' + d.letter }, t ? (t.artiste || '') : 'Charge un morceau')),
@@ -1725,10 +1740,14 @@ const MIX = {
     platter.addEventListener('pointerup', end);
     platter.addEventListener('pointercancel', end);
   },
-  holdBend(d, btn, v) {
-    btn.addEventListener('pointerdown', () => { d.bend = v; if (d.el) d.el.playbackRate = this.rate(d) * (1 + v); });
-    const stop = () => { d.bend = 0; if (d.el) d.el.playbackRate = this.rate(d); };
+  // un appui = une fois ; doigt gardé = se répète de plus en plus vite
+  holdStep(btn, fn) {
+    let t = 0;
+    const stop = () => { clearTimeout(t); t = 0; };
+    const loop = (delay) => { t = setTimeout(() => { fn(); loop(Math.max(40, delay * 0.85)); }, delay); };
+    btn.addEventListener('pointerdown', (e) => { e.preventDefault(); stop(); fn(); loop(400); });
     ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => btn.addEventListener(ev, stop));
+    btn.addEventListener('contextmenu', (e) => e.preventDefault());
   },
   holdSearch(d, btn, dir) {   // ⏪ ⏩ : tant qu'on appuie
     let timer = 0;
@@ -1810,7 +1829,10 @@ const MIX = {
       h('div', { class: 'mixgrid' }, this.deckView(this.decks.A), this.deckView(this.decks.B)),
       h('div', { class: 'xfader' },
         h('div', { class: 'ends' }, h('span', null, 'A'), h('label', { for: 'xfade' }, 'Crossfader'), h('span', null, 'B')),
-        xf,
+        h('div', { class: 'xf-row' },
+          this.ui.xvolA = h('span', { class: 'xf-vol', style: 'color:' + this.decks.A.hex }, 'A ' + this.vol('A') + ' %'),
+          xf,
+          this.ui.xvolB = h('span', { class: 'xf-vol', style: 'color:' + this.decks.B.hex + ';text-align:right' }, 'B ' + this.vol('B') + ' %')),
         h('div', { class: 'xf-btns' },
           h('button', { class: 'btn small', type: 'button', onclick: () => this.automix() }, 'Auto-mix'),
           h('button', { class: 'btn small', type: 'button', onclick: () => { this.xf = 0.5; xf.value = 50; this.applyXf(); } }, 'Centre'),
