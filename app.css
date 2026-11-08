@@ -274,7 +274,7 @@ body.mix-tall .deck-vol{font-size:11px}
 .pg{display:flex;flex-direction:column;gap:22px;padding-bottom:8px}
 .pg-top{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:36px}
 .pg .brand{gap:9px}
-.pg .logo{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#FF9A5C,#FF6A3D);box-shadow:0 4px 14px rgba(255,122,69,.28)}
+.pg .logo{width:28px;height:28px;border-radius:8px;background:#FF7A45;box-shadow:none}
 .pg .brand b{font-size:18px;letter-spacing:-.3px}
 .pg .pill{padding:5px 10px 5px 9px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.06);font-size:12px;font-weight:500}
 .pg-title{font-size:30px;letter-spacing:-.8px}
@@ -308,10 +308,10 @@ body.mix-tall .deck-vol{font-size:11px}
 .pg-inline > span > span{font-size:12px;color:var(--muted)}
 
 /* boutons */
-.pg-btn{height:44px;padding:0 16px;border-radius:12px;border:0;background:rgba(255,255,255,.08);color:var(--text);font-weight:600;font-size:14.5px;display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;transition:transform .1s,opacity .15s}
+.pg-btn{height:40px;padding:0 15px;border-radius:10px;border:0;background:rgba(255,255,255,.08);color:var(--text);font-weight:600;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;transition:transform .1s,opacity .15s}
 .pg-btn:active{transform:scale(.98)}
 .pg-btn:disabled{opacity:.5}
-.pg-btn.primary{width:100%;margin-top:6px;background:linear-gradient(180deg,#FF8A55,#FF6E3A);color:#141414;font-weight:700;box-shadow:0 6px 18px rgba(255,110,58,.28),0 1px 0 rgba(255,255,255,.25) inset}
+.pg-btn.primary{width:100%;margin-top:6px;background:#FF7A45;color:#141414;font-weight:600;box-shadow:none}
 .pg-btn.sm{height:32px;padding:0 12px;border-radius:9px;font-size:13px;flex-shrink:0}
 .pg-btn.accent{background:rgba(255,122,69,.16);color:#FF9A6B}
 .pg-btn.text{height:36px;background:none;color:var(--muted);font-weight:500;font-size:13.5px}
@@ -401,7 +401,7 @@ button.ui-row:active,label.ui-row:active{background:rgba(255,255,255,.04)}
 .lock{gap:18px;background:radial-gradient(120% 70% at 50% 0%,rgba(255,122,69,.13),transparent 60%),var(--bg)}
 .lock-card{display:flex;flex-direction:column;align-items:center;gap:10px;width:min(100%,340px);padding:28px 22px 22px;border-radius:24px;
   background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02)),var(--card);border:1px solid rgba(255,255,255,.08);box-shadow:0 24px 60px rgba(0,0,0,.45)}
-.lock .lock-logo{width:52px;height:52px;border-radius:15px;background:linear-gradient(135deg,#FF9A5C,#FF6A3D);box-shadow:0 8px 24px rgba(255,122,69,.35);margin-bottom:6px}
+.lock .lock-logo{width:52px;height:52px;border-radius:15px;background:#FF7A45;box-shadow:none;margin-bottom:6px}
 .lock .lock-card h1{font-size:24px;letter-spacing:-.5px;margin:0}
 .lock .lock-card .sub{margin:0 0 8px;font-size:14px}
 .lock-pin{position:relative;width:100%;display:flex;justify-content:center;padding:6px 0}
@@ -410,5 +410,5 @@ button.ui-row:active,label.ui-row:active{background:rgba(255,255,255,.04)}
 .lock-dots span.on{background:var(--text);border-color:var(--text);transform:scale(1.08)}
 .lock .lock-pin .lock-input{position:absolute;inset:0;width:100%;height:100%;opacity:.01;font-size:16px;border:0;background:none;color:transparent;caret-color:transparent;padding:0;letter-spacing:0;outline:none}
 .lock .lock-err{font-size:13px}
-.lock .lock-card .btn.primary{width:100%;height:46px;border-radius:12px;font-size:15px;background:linear-gradient(180deg,#FF8A55,#FF6E3A);box-shadow:0 6px 18px rgba(255,110,58,.28)}
+.lock .lock-card .btn.primary{width:100%;height:40px;border-radius:10px;font-size:14px;font-weight:600;background:#FF7A45;box-shadow:none}
 .lock .lock-rescan{width:auto;height:auto;background:none;border:0;color:var(--muted);font-size:13.5px;font-weight:500;padding:10px 14px}
