@@ -255,13 +255,13 @@ function unlock(pcSaysCode = false) {
   });
   return LOCK.waiting;
 }
-// Code redemandé si l'app est restée plus de 5 minutes en arrière-plan (téléphone posé, prêté…).
+// Code redemandé si l'app est restée plus de 20 minutes en arrière-plan (téléphone posé, prêté…).
 // Pendant ce temps, l'écran de l'app est flouté (aperçu des apps récentes).
 document.addEventListener('visibilitychange', () => {
   const locked = !!lockKnown();
   document.body.classList.toggle('masque', document.hidden && locked);
   if (document.hidden) { LOCK.hiddenAt = Date.now(); return; }
-  if (locked && LOCK.hiddenAt && Date.now() - LOCK.hiddenAt > 5 * 60 * 1000) {
+  if (locked && LOCK.hiddenAt && Date.now() - LOCK.hiddenAt > 20 * 60 * 1000) {
     LOCK.jeton = ''; LOCK.code = ''; sessionStorage.removeItem('kadans.jeton');
     unlock();
   }
