@@ -1480,6 +1480,35 @@ const MIX = {
     } catch (e) { toast('Impossible de charger : ' + e.message); }
     if (S.tab === 'mix') this.mount();
   },
+  // choisir un morceau directement depuis l'écran Mix
+  pick(letter) {
+    const tracks = allTracks().filter((t) => t.type !== 'video');
+    const list = h('div');
+    const fill = (q) => {
+      q = (q || '').trim().toLowerCase();
+      const found = tracks.filter((t) => !q || [t.titre, t.artiste, t.bpm].filter(Boolean).join(' ').toLowerCase().includes(q));
+      list.replaceChildren(...found.slice(0, 150).map((t) => {
+        const ok = playable(t);
+        return h('button', { class: 'menu-item', type: 'button', style: ok ? '' : 'opacity:.45',
+          onclick: () => { closeSheet(); this.load(letter, t); } },
+          coverEl(t),
+          h('span', { class: 'meta', style: 'flex:1;min-width:0' },
+            h('span', { class: 't1' }, t.titre),
+            h('span', { class: 't2' }, [t.artiste, t.duree ? fmtTime(t.duree) : null].filter(Boolean).join(' · '))),
+          h('span', { class: 'bpm' + (t.bpm ? '' : ' wait') }, t.bpm ? t.bpm : '…'));
+      }));
+      if (!found.length) list.append(h('p', { class: 'sub', style: 'text-align:center' }, tracks.length ? 'Aucun morceau trouvé.' : 'Ta bibliothèque est vide.'));
+    };
+    const q = h('input', { class: 'input', type: 'search', placeholder: 'Titre, artiste ou BPM…', 'aria-label': 'Rechercher' });
+    q.oninput = () => fill(q.value);
+    fill('');
+    openSheet(() => h('div', null,
+      h('div', { style: 'display:flex;align-items:center;gap:10px;margin-bottom:10px' },
+        h('span', { class: 'badge', style: 'background:' + this.decks[letter].color }, letter),
+        h('h2', { style: 'margin:0;font-size:18px' }, 'Charger sur la platine ' + letter)),
+      h('div', { class: 'search' }, h('span', { html: iconHTML('search', 18), style: 'color:#A3A3AD' }), q),
+      list));
+  },
   computePeaks(buf, n) {
     const ch = buf.getChannelData(0), step = Math.floor(ch.length / n) || 1, out = new Float32Array(n);
     let max = 0.0001;
@@ -1583,9 +1612,10 @@ const MIX = {
   deckView(d) {
     const t = d.track;
     const canvas = h('canvas', { 'aria-hidden': 'true' });
-    const wave = h('div', { class: 'wave' }, canvas, t ? null : h('span', { class: 'hint' }, 'Bibliothèque → « … » → Platine ' + d.letter));
+    const wave = h('div', { class: 'wave' }, canvas, t ? null : h('span', { class: 'hint' }, 'Touche ici pour charger un morceau'));
     wave.addEventListener('pointerdown', (e) => {
-      if (!t || !d.el.duration) return;
+      if (!t) { this.pick(d.letter); return; }
+      if (!d.el.duration) return;
       d.el.currentTime = Math.max(0, Math.min(1, along(e, wave))) * d.el.duration;
     });
     this.ui['canvas' + d.letter] = canvas;
@@ -1620,7 +1650,9 @@ const MIX = {
         h('div', { class: 'meta', style: 'flex:1;min-width:0;display:flex;flex-direction:column;gap:2px' },
           h('span', { class: 't1' }, t ? t.titre : 'Platine vide'),
           h('span', { class: 't2', id: 'time' + d.letter }, t ? (t.artiste || '') : 'Charge un morceau')),
-        h('div', { class: 'big-bpm' }, bpmEl, h('span', null, 'BPM'))),
+        h('div', { class: 'big-bpm' }, bpmEl, h('span', null, 'BPM')),
+        h('button', { class: 'icon-btn deck-load', type: 'button', 'aria-label': 'Choisir un morceau pour la platine ' + d.letter,
+          html: iconHTML('music', 20), onclick: () => this.pick(d.letter) })),
       platter,
       wave,
       h('div', { class: 'deck-ctrl' }, play,

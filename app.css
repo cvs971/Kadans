@@ -237,3 +237,7 @@ body.mix-land .rec-land{display:inline-flex;align-items:center;gap:6px}
 body.mix-land .tabs{padding:2px 8px max(2px,var(--safe-b))}
 body.mix-land .tabs button{min-height:32px;font-size:10px;gap:1px}
 body.mix-land .tabs .ico svg{width:18px;height:18px}
+/* la fenêtre du bas (choix d'un morceau…) pivote avec l'écran Mix */
+body.mix-rot #sheet{inset:auto;top:0;left:0;width:100vh;height:100vw;transform-origin:top left;transform:rotate(90deg) translateY(-100%)}
+body.mix-rot .sheet-panel{max-height:92vw}
+body.mix-land .deck-load{width:30px;height:30px}
