@@ -21,6 +21,7 @@ const ICONS = {
   video: P('<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/>'),
   a: P('<path d="M12 4v16M4 12h16"/>'),
   chev: P('<path d="M9 6l6 6-6 6"/>'),
+  wifi: P('<path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19.5" r="1"/>'),
   qr: P('<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14h2"/>'),
   pc: P('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'),
   off: P('<path d="M3 3l18 18M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 5-2.7M14 10.3A10 10 0 0 1 19 13M2 9.5a15 15 0 0 1 4.5-2.8M10.5 5.1A15 15 0 0 1 22 9.5"/><circle cx="12" cy="20" r="1"/>'),
@@ -155,6 +156,44 @@ function parseLink(text) {
 }
 
 // ------------------------------------------------------------------ serveur
+// ------------------------------------------------------------------ Wi-Fi de la maison
+// À la maison, on parle au PC directement par le Wi-Fi (bien plus rapide) ; ailleurs, par le tunnel Internet.
+// Le Wi-Fi demande d'avoir installé une fois le certificat Kadans sur le téléphone (onglet Mobile du PC).
+const WIFI = { base: null, tried: 0, info: (() => { try { return JSON.parse(localStorage.getItem('kadans.wifi') || 'null'); } catch (e) { return null; } })() };
+const base = () => WIFI.base || S.server;
+function setWifiInfo(info) {
+  const k = JSON.stringify(info || null);
+  if (k === JSON.stringify(WIFI.info)) return;
+  WIFI.info = info || null; localStorage.setItem('kadans.wifi', k);
+  if (!info) WIFI.base = null;
+  WIFI.tried = 0; probeWifi();
+}
+let wifiProbing = null;
+function probeWifi(force) {
+  if (wifiProbing) return wifiProbing;
+  const info = WIFI.info;
+  if (!info || !info.ips || !info.ips.length || !S.key) { WIFI.base = null; return Promise.resolve(); }
+  if (!force && Date.now() - WIFI.tried < (WIFI.base ? 60000 : 20000)) return Promise.resolve();
+  WIFI.tried = Date.now();
+  wifiProbing = (async () => {
+    let found = null;
+    for (const ip of info.ips) {
+      const url = `https://${ip}:${info.port}`;
+      const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 2500);
+      try {
+        const r = await fetch(url + '/api/etat', { headers: { 'x-kadans-cle': S.key, ...(LOCK.jeton ? { 'x-kadans-jeton': LOCK.jeton } : {}) }, signal: ctrl.signal, cache: 'no-store' });
+        if (r.ok && (r.headers.get('content-type') || '').includes('json')) { found = url; break; }
+      } catch (e) { /* pas à la maison, ou certificat pas encore installé */ }
+      finally { clearTimeout(t); }
+    }
+    const changed = found !== WIFI.base;
+    WIFI.base = found;
+    if (changed) { updatePill(); if (S.tab === 'reglages') render(); }
+  })().finally(() => { wifiProbing = null; });
+  return wifiProbing;
+}
+function wifiLost() { if (WIFI.base) { WIFI.base = null; WIFI.tried = Date.now(); updatePill(); } }
+
 async function api(path, opts = {}, retried = false) {
   if (!S.server) throw new Error('PC non relié');
   const headers = { 'x-kadans-cle': S.key, ...(LOCK.jeton ? { 'x-kadans-jeton': LOCK.jeton } : {}), ...(opts.headers || {}) };
@@ -162,8 +201,12 @@ async function api(path, opts = {}, retried = false) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), opts.timeout || 12000);
   let r;
+  const via = base();
   try {
-    r = await fetch(S.server + path, { method: opts.method || 'GET', headers, body: opts.body, signal: ctrl.signal });
+    r = await fetch(via + path, { method: opts.method || 'GET', headers, body: opts.body, signal: ctrl.signal });
+  } catch (e) {
+    if (via !== S.server) { wifiLost(); clearTimeout(timer); return api(path, opts, retried); }   // plus de Wi-Fi : par Internet
+    throw e;
   } finally { clearTimeout(timer); }
   const data = await r.json().catch(() => ({}));
   if (r.status === 423 && !retried) {   // le PC demande le code d'accès : on le demande, puis on recommence
@@ -174,8 +217,8 @@ async function api(path, opts = {}, retried = false) {
   return data;
 }
 const authQ = () => `k=${encodeURIComponent(S.key)}` + (LOCK.jeton ? `&j=${encodeURIComponent(LOCK.jeton)}` : '');
-const fileURL = (id) => `${S.server}/api/fichier/${id}?${authQ()}`;
-const coverURL = (id) => `${S.server}/api/pochette/${id}?${authQ()}`;
+const fileURL = (id) => `${base()}/api/fichier/${id}?${authQ()}`;
+const coverURL = (id) => `${base()}/api/pochette/${id}?${authQ()}`;
 
 // ------------------------------------------------------------------ code d'accès à 6 chiffres
 // Choisi sur le PC (onglet iPhone). Demandé à chaque ouverture de l'app ; vérifié par le PC.
@@ -328,6 +371,8 @@ async function checkServer() {
     const st = await api('/api/etat', { timeout: 15000 });   // ligne lente : on attend plus avant de conclure
     S.online = true; S.pcName = st.nom_pc || ''; S.fails = 0; S.keyRefused = false;
     refreshLockState();
+    if ('wifi' in st) setWifiInfo(st.wifi);   // ancienne version de Kadans : pas de Wi-Fi direct
+    probeWifi();
   } catch (e) {
     // une seule réponse lente ne veut pas dire « PC éteint » : hors ligne après 2 échecs de suite
     S.fails = (S.fails || 0) + 1;
@@ -502,40 +547,86 @@ async function loadOffline() {
   } catch (e) { console.warn(e); }
 }
 
-// Transfert robuste pour une connexion lente ou qui coupe : si ça bloque ou casse, on reprend
-// là où on en était (en-tête Range) au lieu de tout recommencer. Jusqu'à 8 reprises.
-async function fetchWithProgress(url, onProgress) {
-  const chunks = []; let got = 0, total = 0, type = '';
-  for (let attempt = 0; attempt < 8; attempt++) {
+// Transfert rapide et robuste : le fichier est découpé en tranches de 2 Mo téléchargées 4 à la fois
+// (à travers le tunnel internet, plusieurs flux en parallèle vont bien plus vite qu'un seul).
+// Chaque tranche reprend là où elle s'est arrêtée si la connexion bloque ou coupe (jusqu'à 8 essais).
+const CHUNK = 2 * 1024 * 1024, PARTS = 4;
+async function fetchRange(url, start, end, onBytes, info) {
+  const parts = []; let got = 0;
+  const tries = WIFI.base && url.startsWith(WIFI.base) ? 2 : 8;   // par le Wi-Fi : on bascule vite sur Internet s'il décroche
+  for (let attempt = 0; attempt < tries; attempt++) {
     if (attempt) await new Promise((r) => setTimeout(r, Math.min(15000, 1500 * attempt)));
     const ctrl = new AbortController();
-    let stall = setTimeout(() => ctrl.abort(), 45000);   // rien reçu pendant 45 s : on relance
+    let stall = setTimeout(() => ctrl.abort(), WIFI.base && url.startsWith(WIFI.base) ? 8000 : 45000);   // rien reçu : on relance
     try {
-      const r = await fetch(url, { signal: ctrl.signal, headers: got ? { Range: `bytes=${got}-` } : {} });
+      const to = end == null ? '' : end;
+      const r = await fetch(url, { signal: ctrl.signal, headers: { Range: `bytes=${start + got}-${to}` } });
       if (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) throw Object.assign(new Error('Téléchargement impossible (' + r.status + ')'), { fatal: true });
       if (!r.ok) throw new Error('Erreur ' + r.status);
-      if (got && r.status !== 206) { chunks.length = 0; got = 0; }   // le PC a renvoyé tout le fichier : on repart de zéro
-      type = type || r.headers.get('content-type') || '';
-      const len = +r.headers.get('content-length') || 0;
-      if (!total) total = got + len;
-      if (!r.body) { chunks.push(new Uint8Array(await r.arrayBuffer())); return new Blob(chunks, { type }); }
-      const reader = r.body.getReader();
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        clearTimeout(stall); stall = setTimeout(() => ctrl.abort(), 45000);
-        chunks.push(value); got += value.length;
-        if (total) onProgress(Math.min(99, Math.round(got * 100 / total)));
+      if (r.status !== 206) {   // le PC renvoie tout le fichier d'un coup
+        if (start > 0) throw Object.assign(new Error('reprise impossible'), { fatal: true });   // une tranche ne reçoit jamais tout le fichier
+        if (got) { parts.length = 0; onBytes(-got); got = 0; }   // on repart de zéro, en entier
+        info.whole = true;
+      }
+      info.type = info.type || r.headers.get('content-type') || '';
+      // Taille totale : dans « Content-Range » (bytes 0-2097151/12513283). Un ancien Kadans ne laisse pas l'app
+      // la lire (règle des navigateurs entre deux adresses) : on se fie alors à la longueur de CETTE réponse.
+      const cl = +r.headers.get('content-length') || 0, before = got;
+      const m = (r.headers.get('content-range') || '').match(/\/(\d+)$/);
+      if (m) info.total = +m[1];
+      else if (info.whole) info.total = cl;
+      else if (end == null && cl) info.total = start + before + cl;
+      let want;
+      if (info.whole) want = info.total;
+      else if (info.total) want = Math.min(end == null ? info.total - 1 : end, info.total - 1) - start + 1;   // fichier plus petit que la tranche
+      else want = cl ? before + cl : (end == null ? 0 : end - start + 1);
+      if (!r.body) { const b = new Uint8Array(await r.arrayBuffer()); parts.push(b); got += b.length; onBytes(b.length); }
+      else {
+        const reader = r.body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          clearTimeout(stall); stall = setTimeout(() => ctrl.abort(), 45000);
+          parts.push(value); got += value.length; onBytes(value.length);
+        }
       }
       clearTimeout(stall);
-      if (!total || got >= total) { onProgress(100); return new Blob(chunks, { type }); }
+      if (!want || got >= want) return parts;
       // coupé avant la fin : on reprend au tour suivant
     } catch (e) {
       clearTimeout(stall);
       if (e.fatal) throw e;
     }
   }
-  throw new Error('connexion trop lente ou coupée (' + (total ? Math.round(got * 100 / total) + ' % reçus' : 'rien reçu') + ')');
+  throw new Error('connexion trop lente ou coupée');
+}
+async function fetchWithProgress(url, onProgress) {
+  const info = { total: 0, type: '', whole: false };
+  let got = 0;
+  const bytes = (n) => { got += n; if (info.total) onProgress(Math.max(0, Math.min(99, Math.round(got * 100 / info.total)))); };
+  // 1re tranche : donne aussi la taille totale du fichier
+  const first = await fetchRange(url, 0, CHUNK - 1, bytes, info);
+  const firstLen = first.reduce((n, p) => n + p.length, 0);
+  if (info.whole || firstLen < CHUNK || (info.total && info.total <= CHUNK)) { onProgress(100); return new Blob(first, { type: info.type }); }
+  if (!info.total) {   // taille totale cachée (ancien Kadans) : la suite en un seul flux, longueur contrôlée
+    const rest = await fetchRange(url, CHUNK, null, bytes, info);
+    onProgress(100);
+    return new Blob([...first, ...rest], { type: info.type });
+  }
+  // les tranches suivantes, 4 à la fois
+  const ranges = [];
+  for (let s = CHUNK; s < info.total; s += CHUNK) ranges.push([s, Math.min(info.total, s + CHUNK) - 1]);
+  const out = new Array(ranges.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < ranges.length) {
+      const i = next++;
+      out[i] = await fetchRange(url, ranges[i][0], ranges[i][1], bytes, { ...info, whole: false });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PARTS, ranges.length) }, worker));
+  onProgress(100);
+  return new Blob([...first, ...out.flat()], { type: info.type });
 }
 
 async function saveOffline(item, quiet = false) {
@@ -546,14 +637,21 @@ async function saveOffline(item, quiet = false) {
   try {
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
     let last = 0;
-    const blob = await fetchWithProgress(fileURL(item.id), (p) => {
+    const coverP = noCover.has(item.id) ? Promise.resolve(null)
+      : fetch(coverURL(item.id)).then((c) => { if (c.ok) return c.blob(); noCover.add(item.id); return null; }).catch(() => null);
+    const onP = (p) => {
       S.saving.set(item.id, p);
       if (p - last >= 2) { last = p; showProgress(item.id, p); }   // juste le pourcentage, pas toute la liste
-    });
-    let cover = null;
-    if (!noCover.has(item.id)) {
-      try { const c = await fetch(coverURL(item.id)); if (c.ok) cover = await c.blob(); else noCover.add(item.id); } catch (e) { /* pas de pochette */ }
+    };
+    let blob;
+    const viaWifi = !!WIFI.base;   // retenu ici : une autre requête peut remarquer avant nous que le Wi-Fi a décroché
+    try { blob = await fetchWithProgress(fileURL(item.id), onP); }
+    catch (e) {   // le Wi-Fi a décroché (sortie de la maison…) : on reprend par Internet
+      if (!viaWifi || e.fatal) throw e;
+      wifiLost(); last = 0;
+      blob = await fetchWithProgress(fileURL(item.id), onP);
     }
+    const cover = await coverP;
     if (cover) coverCache.set(item.id, URL.createObjectURL(cover));
     const meta = { id: item.id, titre: item.titre, artiste: item.artiste, bpm: item.bpm, duree: item.duree,
       type: item.type, ext: item.ext, source: item.source, categorie: item.categorie, ajoute: item.ajoute || Date.now() / 1000,
@@ -581,7 +679,7 @@ function laterRefresh() {
 function showProgress(id, p) {
   document.querySelectorAll(`[data-pct="${CSS.escape(id)}"]`).forEach((e) => { e.textContent = p + '%'; });
 }
-// Transfère plusieurs morceaux en parallèle (2 à la fois : plus rapide, sans étouffer une connexion lente).
+// Transfère plusieurs morceaux en parallèle (3 à la fois, chacun découpé en tranches : bien plus rapide).
 // Un contrôle de connexion raté n'arrête plus tout : on n'abandonne que si un transfert échoue ET que le PC
 // ne répond vraiment plus.
 async function saveMany(list, onEach, keepGoing = () => true) {
@@ -594,7 +692,7 @@ async function saveMany(list, onEach, keepGoing = () => true) {
       if (!ok && S.online === false) break;
     }
   };
-  await Promise.all([worker(), worker()]);
+  await Promise.all([worker(), worker(), worker()]);
 }
 // Retire des morceaux de l'iPhone SEULEMENT : les fichiers du PC ne sont jamais touchés,
 // et le PC ne les renverra plus à la synchronisation (sauf si tu les recoches sur le PC).
@@ -688,7 +786,7 @@ async function uploadToPC(meta) {
   if (!blob) throw new Error('fichier absent');
   const name = ((meta.artiste ? meta.artiste + ' - ' : '') + (meta.titre || 'morceau')).replace(/[\\/:*?"<>|]/g, '_') + '.' + (meta.ext || 'm4a');
   const q = new URLSearchParams({ id: meta.id, nom: name, titre: meta.titre || '' });
-  const r = await fetch(`${S.server}/api/envoyer?${q}`, { method: 'POST', headers: { 'x-kadans-cle': S.key, ...(LOCK.jeton ? { 'x-kadans-jeton': LOCK.jeton } : {}) }, body: blob });
+  const r = await fetch(`${base()}/api/envoyer?${q}`, { method: 'POST', headers: { 'x-kadans-cle': S.key, ...(LOCK.jeton ? { 'x-kadans-jeton': LOCK.jeton } : {}) }, body: blob });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.erreur || 'erreur ' + r.status);
   meta.pcId = d.fichier_id;
@@ -873,7 +971,7 @@ window.addEventListener('unhandledrejection', (e) => {
 function statusPill() {
   let cls = 'dot', txt = 'PC non relié';
   if (S.server) {
-    if (S.online === true) { cls += ' ok'; txt = 'PC connecté'; }
+    if (S.online === true) { cls += ' ok'; txt = WIFI.base ? 'PC · Wi-Fi' : 'PC connecté'; }
     else if (S.online === false) { cls += ' ko'; txt = S.keyRefused ? 'Rescanne le QR du PC' : 'Hors ligne'; }
     else txt = 'Connexion…';
   }
@@ -1529,11 +1627,15 @@ const MIX = {
       }
       for (const d of Object.values(this.decks)) {
         d.el = new Audio();
+        d.el.crossOrigin = 'anonymous';   // lecture en direct depuis le PC : le son peut passer dans la table de mixage
         d.el.playsInline = true;
         d.el.preservesPitch = true; d.el.webkitPreservesPitch = true;
         d.node = this.ctx.createMediaElementSource(d.el);
         d.gain = this.ctx.createGain();
+        d.an = this.ctx.createAnalyser(); d.an.fftSize = 2048;
         d.node.connect(d.gain).connect(this.master);
+        d.node.connect(d.an);
+        d.el.addEventListener('playing', () => this.checkStream(d));
         d.el.addEventListener('play', () => this.updateButtons());
         d.el.addEventListener('pause', () => this.updateButtons());
       }
@@ -1564,27 +1666,57 @@ const MIX = {
     this.ensure();
     const d = this.decks[letter];
     if (!playable(t)) { toast('Ce morceau n’est pas sur l’iPhone et ton PC est injoignable.'); return; }
-    toast('Chargement sur la platine ' + letter + '…', 1500);
     try {
-      let blob = S.offline.has(t.id) ? await DB.getFile(t.id) : null;
-      if (!blob) { const r = await fetch(fileURL(t.id)); if (!r.ok) throw new Error('fichier indisponible'); blob = await r.blob(); }
+      const local = S.offline.has(t.id) ? await DB.getFile(t.id) : null;
       d.el.pause();
       if (d.url) URL.revokeObjectURL(d.url);
-      d.url = URL.createObjectURL(blob);
-      d.el.src = d.url;
-      d.el.playbackRate = this.rate(d);
+      d.url = null; d.stream = !local; d.blobP = null; d.heard = false;
       d.track = t; d.cue = 0; d.peaks = null; d.bend = 0;
+      if (local) { d.url = URL.createObjectURL(local); d.el.src = d.url; }
+      else {   // morceau resté sur le PC : lu en direct, jamais gardé sur le téléphone
+        d.el.src = fileURL(t.id);
+        toast('Platine ' + letter + ' : lecture en direct depuis le PC' + (WIFI.base ? ' (Wi-Fi)' : ''), 1800);
+      }
+      d.el.playbackRate = this.rate(d);
       // la pochette sur l'étiquette du disque (gardée sur l'iPhone, sinon celle du PC)
       d.coverImg = null;
-      const coverSrc = coverCache.get(t.id) || (S.offline.has(t.id) ? await DB.getCover(t.id).then((b) => b && URL.createObjectURL(b)).catch(() => null) : null)
+      const coverSrc = coverCache.get(t.id) || (local ? await DB.getCover(t.id).then((b) => b && URL.createObjectURL(b)).catch(() => null) : null)
         || (S.online && !noCover.has(t.id) ? coverURL(t.id) : null);
       if (coverSrc) { d.coverImg = new Image(); d.coverImg.src = coverSrc; }
       if (S.tab === 'mix') this.mount();
+      // forme d'onde en arrière-plan : le fichier est lu en mémoire puis oublié (rien n'est gardé)
+      d.blobP = local ? Promise.resolve(local) : fetchWithProgress(fileURL(t.id), () => {});
+      const blob = await d.blobP;
+      if (d.track !== t) return;
       const buf = await this.ctx.decodeAudioData(await blob.arrayBuffer());
+      if (d.track !== t) return;
       d.peaks = this.computePeaks(buf, 600);
       if (!d.track.duree) d.track.duree = buf.duration;
-    } catch (e) { toast('Impossible de charger : ' + e.message); }
+    } catch (e) { if (d.track === t && !d.stream) toast('Impossible de charger : ' + e.message); }
     if (S.tab === 'mix') this.mount();
+  },
+  // Sécurité : si le téléphone joue le flux du PC sans que le son passe dans la table de mixage
+  // (certaines versions d'iOS), on bascule tout seul sur le fichier en mémoire, au même endroit.
+  checkStream(d) {
+    if (!d.stream || d.heard || d.checking) return;
+    d.checking = true;
+    const t = d.track, t0 = d.el.currentTime, buf = new Float32Array(1024);
+    let n = 0;
+    const iv = setInterval(async () => {
+      if (d.track !== t || d.el.paused) { clearInterval(iv); d.checking = false; return; }
+      d.an.getFloatTimeDomainData(buf);
+      if (buf.some((v) => Math.abs(v) > 1e-4)) { d.heard = true; clearInterval(iv); d.checking = false; return; }
+      if (++n < 15 || d.el.currentTime - t0 < 1.5) return;
+      clearInterval(iv); d.checking = false;
+      try {
+        const blob = await (d.blobP || fetchWithProgress(fileURL(t.id), () => {}));
+        if (d.track !== t) return;
+        const pos = d.el.currentTime, playing = !d.el.paused;
+        d.stream = false; d.url = URL.createObjectURL(blob); d.el.src = d.url; d.el.currentTime = pos;
+        d.el.playbackRate = this.rate(d) * (1 + d.bend);
+        if (playing) d.el.play();
+      } catch (e) { /* on garde le flux */ }
+    }, 200);
   },
   // choisir un morceau directement depuis l'écran Mix
   pick(letter) {
@@ -2038,6 +2170,26 @@ function bgCard() {
 }
 bgApply(bgLoad());
 
+// guide : installer le certificat Kadans pour le Wi-Fi direct
+function wifiHelp() {
+  const step = (n, t) => h('li', null, h('span', { class: 'pg-num' }, String(n)), h('span', null, ...t));
+  const check = h('button', { class: 'pg-btn sm', type: 'button', onclick: async () => {
+    check.disabled = true; await probeWifi(true); check.disabled = false;
+    toast(WIFI.base ? 'Wi-Fi direct actif ✓' : (WIFI.info ? 'Pas encore : vérifie le certificat, et que tu es sur le Wi-Fi de la maison.' : 'Ton PC n’a pas encore la nouvelle version de Kadans.'), 4000);
+    if (WIFI.base) { closeSheet(); render(); }
+  } }, 'Vérifier maintenant');
+  openSheet(() => h('div', { class: 'pg', style: 'gap:14px' },
+    h('div', null, h('h2', { style: 'margin:0 0 4px;font-size:20px' }, 'Wi-Fi de la maison'),
+      h('p', { class: 'pg-muted' }, WIFI.base ? 'Actif ✓ À la maison, la musique passe directement par le Wi-Fi.' : 'À la maison, la musique peut passer directement par le Wi-Fi : beaucoup plus rapide. À faire une seule fois :')),
+    h('ol', { class: 'pg-steps small' },
+      step(1, ['Sur le PC, onglet ', h('b', null, 'Mobile'), ' : scanne le QR ', h('b', null, '« Certificat Wi-Fi »'), ' avec l’appareil photo, puis ', h('b', null, 'Autoriser'), '.']),
+      step(2, ['Ouvre ', h('b', null, 'Réglages'), ' → ', h('b', null, 'Profil téléchargé'), ' → ', h('b', null, 'Installer'), '.']),
+      step(3, ['Puis ', h('b', null, 'Réglages → Général → Informations → Réglages des certificats'), ' : active ', h('b', null, '« Kadans - Wi-Fi de la maison »'), '.']),
+      step(4, ['Reviens dans Kadans, sur le Wi-Fi de la maison.'])),
+    h('p', { class: 'ui-note', style: 'margin:0' }, 'Ce certificat ne marche que pour les adresses du réseau de la maison : il ne sert pour aucun site Internet.'),
+    h('div', { style: 'display:flex;gap:8px;justify-content:flex-end' }, check)));
+}
+
 function viewSettings() {
   const on = S.online === true, off = S.online === false;
   const st = on ? 'Connecté' : off ? 'Injoignable — PC éteint ?' : (S.server ? 'Connexion…' : 'Non relié');
@@ -2058,6 +2210,9 @@ function viewSettings() {
         h('span', null, h('span', { class: 'dot' + (on ? ' ok' : off ? ' ko' : '') }), st)),
       S.server ? verify : h('button', { class: 'pg-btn sm accent', type: 'button', onclick: scanQR }, 'Relier')),
     uiGroup('Connexion', [
+      uiRow({ icon: 'wifi', tint: WIFI.base ? '#5BD69A' : '#A3A3AD', title: 'Wi-Fi de la maison',
+        sub: WIFI.base ? 'Direct avec le PC : transferts rapides' : WIFI.info ? 'Inactif : certificat à installer, ou pas à la maison' : 'Disponible avec la nouvelle version de Kadans',
+        right: WIFI.base ? 'Actif' : 'Internet', onclick: wifiHelp, chevron: true }),
       uiRow({ icon: 'qr', tint: '#FF7A45', title: 'Scanner le QR du PC', sub: 'Après un redémarrage du PC', onclick: scanQR, chevron: true }),
       uiRow({ icon: 'link', tint: '#7C9CFF', title: 'Coller un lien', sub: 'Le lien affiché sous le QR', onclick: askLink, chevron: true }),
       on ? uiRow({ icon: 'folder', tint: '#F5C451', title: 'Réanalyser les dossiers', sub: 'Cherche les nouveaux morceaux sur le PC',
@@ -2092,7 +2247,7 @@ function viewSettings() {
 // ------------------------------------------------------------------ démarrage
 document.querySelectorAll('.tabs [data-ico]').forEach((s) => { s.innerHTML = iconHTML(s.dataset.ico, 22); });
 document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
-document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(true); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { probeWifi(true); tick(true); } });
 window.addEventListener('hashchange', async () => {
   if (readHashConfig()) { toast('PC relié ✓'); await checkServer(); await refreshLibrary(); render(); }
 });
@@ -2124,6 +2279,7 @@ async function tick(force) {
   // et vérifié AVANT d'afficher quoi que ce soit.
   LOCK.jeton = ''; sessionStorage.removeItem('kadans.jeton');
   await guard();
+  probeWifi(true);   // à la maison : Wi-Fi direct dès que possible (sans retarder l'ouverture)
   setTab(S.server ? (S.offline.size || S.lib.length ? 'biblio' : 'ajouter') : 'ajouter');
   if (linked) toast('PC relié ✓ Ajoute maintenant l’app à l’écran d’accueil.', 4000);
   await tick(true);
