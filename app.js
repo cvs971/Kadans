@@ -1560,6 +1560,7 @@ async function scanQR() {
         if (cfg) {
           stop(); closeSheet();
           setServer(cfg.s, cfg.k);
+          window.dispatchEvent(new Event('kadans-relie'));   // l'écran d'accueil laisse place à la page du code
           await relinked();
           toast('PC relié ✓');
           await checkServer(); await refreshLibrary(); render();
@@ -2337,6 +2338,41 @@ async function tick(force) {
   } finally { ticking = false; }
 }
 
+// ------------------------------------------------------------------ écran d'accueil
+// À chaque ouverture : d'abord scanner le QR du PC, puis la page du code.
+// Loin du PC : un petit lien permet de taper son code directement (musique gardée sur le téléphone).
+function scanGate() {
+  return new Promise((done) => {
+    let finished = false;
+    const finish = (how) => {
+      if (finished) return; finished = true;
+      window.removeEventListener('kadans-relie', onLinked);
+      document.body.classList.remove('sheet-over-lock');
+      box.remove(); done(how);
+    };
+    const onLinked = () => finish('scan');
+    window.addEventListener('kadans-relie', onLinked);
+    const scan = h('button', { class: 'btn primary', type: 'button', onclick: () => {
+      document.body.classList.add('sheet-over-lock');   // la fenêtre du scan passe au-dessus de l'accueil
+      scanQR();
+      const back = setInterval(() => {
+        if (!$('#sheet').hidden && !finished) return;
+        clearInterval(back);
+        if (!finished) document.body.classList.remove('sheet-over-lock');   // scan annulé : on reste sur l'accueil
+      }, 300);
+    } }, h('span', { class: 'ico', html: iconHTML('qr', 20) }), 'Scanner le QR code');
+    const box = h('div', { class: 'lock gate' },
+      h('div', { class: 'lock-card' },
+        h('span', { class: 'logo lock-logo', html: LOGO_SVG(26) }),
+        h('h1', null, 'Kadans'),
+        h('p', { class: 'sub' }, 'Scanne le QR code affiché sur ton PC (onglet Mobile)'),
+        scan),
+      h('button', { class: 'lock-rescan', type: 'button', onclick: () => finish('code') },
+        S.server ? 'Pas près du PC ? Taper mon code' : 'Continuer sans relier de PC'));
+    document.body.append(box);
+  });
+}
+
 (async function start() {
   const linked = readHashConfig();
   if (S.server && !linked) setServer(S.server, S.key);
@@ -2345,8 +2381,12 @@ async function tick(force) {
   // Code d'accès : redemandé à CHAQUE ouverture (un jeton gardé par iOS d'une ouverture précédente ne compte pas),
   // et vérifié AVANT d'afficher quoi que ce soit.
   LOCK.jeton = ''; sessionStorage.removeItem('kadans.jeton');
-  if (WIFI.info && S.server) await probeWifi(true);   // à la maison : le PC est joignable par le Wi-Fi, même s'il a changé d'adresse Internet
-  await guard();
+  // écran d'accueil (sauf si l'app vient d'être ouverte par le lien du QR, ou tourne sur le PC lui-même)
+  const how = linked || S.server === location.origin ? 'lien' : await scanGate();
+  if (how !== 'scan') {   // après un scan, la page du code est déjà affichée par le scan lui-même
+    if (WIFI.info && S.server) await probeWifi(true);   // à la maison : le PC est joignable par le Wi-Fi, même s'il a changé d'adresse Internet
+    await guard();
+  }
   probeWifi(true);   // à la maison : Wi-Fi direct dès que possible (sans retarder l'ouverture)
   setTab(S.server ? (S.offline.size || S.lib.length ? 'biblio' : 'ajouter') : 'ajouter');
   if (linked) toast('PC relié ✓ Ajoute maintenant l’app à l’écran d’accueil.', 4000);
