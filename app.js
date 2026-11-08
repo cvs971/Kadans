@@ -1167,7 +1167,7 @@ function askLink() {
 }
 
 // ------------------------------------------------------------------ vue : Playlist
-const PL = { ids: safeList('kadans.playlist').filter((x) => typeof x === 'string'), open: new Set(), q: '', beats: +(localStorage.getItem('kadans.plBeats') || 16) };
+const PL = { ids: safeList('kadans.playlist').filter((x) => typeof x === 'string'), open: new Set(), q: '', folder: null, beats: +(localStorage.getItem('kadans.plBeats') || 16) };
 const plSave = () => { try { localStorage.setItem('kadans.playlist', JSON.stringify(PL.ids)); } catch (e) { /* rien */ } };
 const plAll = () => allTracks().filter((t) => t.type !== 'video');
 function plTracks() { const by = new Map(plAll().map((t) => [t.id, t])); return PL.ids.map((id) => by.get(id)).filter(Boolean); }
@@ -1229,49 +1229,61 @@ function plSheet() {
   openSheet(draw, () => { if (S.tab === 'playlist') render(); });
 }
 function viewPlaylist() {
-  const wrap = h('div', { class: 'pg pl-page' });
-  wrap.append(h('header', { class: 'pg-top' }, h('h1', { class: 'pg-title' }, 'Playlist'), statusPill()));
-  wrap.append(h('p', { class: 'pg-muted', style: 'margin-top:-10px' }, 'Coche des morceaux puis « Mixer » : Kadans les enchaîne tout seul sur les platines.'));
+  const all = plAll();
+  const wrap = h('div', { class: 'pl-page' });
+  const count = h('p', { class: 'sub' });
+  const setCount = () => { const k = plTracks().length; count.textContent = all.length + ' morceaux' + (k ? ' · ' + k + ' coché' + (k > 1 ? 's' : '') : ''); };
+  setCount();
+  wrap.append(h('div', { class: 'top', style: 'align-items:flex-end' }, h('div', null, h('h1', null, 'Playlist'), count), statusPill()));
   wrap.append(plStatus());
-  const q = h('input', { class: 'input', type: 'search', placeholder: 'Titre, artiste…', 'aria-label': 'Chercher un morceau', value: PL.q });
-  const tree = h('div', { class: 'pl-tree' });
-  const chosen = () => new Set(PL.ids);
-  const drawTree = () => {
+  const q = h('input', { class: 'input', type: 'search', placeholder: 'Titre, artiste ou BPM…', 'aria-label': 'Rechercher', value: PL.q });
+  wrap.append(h('div', { class: 'search' }, h('span', { html: iconHTML('search', 18), style: 'color:#A3A3AD' }), q));
+  const folders = h('div'), list = h('div');
+  wrap.append(folders, list, plBar());
+  const shown = () => {
     const query = PL.q.trim().toLowerCase();
-    const all = plAll().filter((t) => !query || ((t.titre || '') + ' ' + (t.artiste || '')).toLowerCase().includes(query));
-    const sorted = (l) => l.slice().sort((a, b) => ((a.artiste || '') + (a.titre || '')).localeCompare((b.artiste || '') + (b.titre || ''), 'fr'));
-    const groups = [{ key: '', label: 'Sans catégorie', d: 0, tracks: sorted(all.filter((t) => t.categorie === '')) }];
-    for (const c of S.cats.slice().sort((a, b) => a.localeCompare(b, 'fr'))) groups.push({ key: c, label: c.split('/').pop(), d: c.split('/').length - 1, tracks: sorted(all.filter((t) => t.categorie === c)) });
-    const rest = all.filter((t) => t.categorie == null || (t.categorie !== '' && !S.cats.includes(t.categorie)));
-    if (rest.length) groups.push({ key: '*autres', label: 'Autres (sur ce téléphone, autres dossiers du PC)', d: 0, tracks: sorted(rest) });
-    const sel = chosen();
-    tree.replaceChildren(...groups.filter((g) => g.tracks.length).map((g) => {
-      const n = () => g.tracks.filter((t) => PL.ids.includes(t.id)).length;
-      const det = h('details', { class: 'pl-grp' }); det.open = !!query || PL.open.has(g.key);
-      det.addEventListener('toggle', () => { if (det.open) PL.open.add(g.key); else PL.open.delete(g.key); });
-      const cb = h('input', { type: 'checkbox', 'aria-label': 'Tout le dossier ' + g.label });
-      const count = h('span', { class: 'pl-cnt' });
-      const sync = () => { const k = n(); cb.checked = k > 0 && k === g.tracks.length; cb.indeterminate = k > 0 && k < g.tracks.length; count.textContent = g.tracks.length + (k ? ' · ' + k + ' ✓' : ''); };
-      const rows = g.tracks.map((t) => {
-        const ok = playable(t);
-        const c = h('input', { type: 'checkbox', 'aria-label': t.titre });
-        c.checked = sel.has(t.id); c.disabled = !ok;
-        const row = h('label', { class: 'pl-row' + (c.checked ? ' on' : '') + (ok ? '' : ' off'), style: 'padding-left:' + (14 + g.d * 14) + 'px' }, c,
-          h('span', { class: 'meta' }, h('span', { class: 't1' }, t.titre), h('span', { class: 't2' }, [t.artiste, t.duree ? fmtTime(t.duree) : null].filter(Boolean).join(' · ') || (ok ? '' : 'PC injoignable'))),
-          h('span', { class: 'bpm' + (t.bpm ? '' : ' wait') }, t.bpm ? t.bpm : '—'));
-        c.onchange = () => { plSet(t.id, c.checked); plSave(); row.classList.toggle('on', c.checked); sync(); plRefresh(); };
-        return { t, c, row };
-      });
-      cb.onclick = (e) => { e.stopPropagation(); const on = cb.checked; rows.forEach((r) => { if (!r.c.disabled) { r.c.checked = on; plSet(r.t.id, on); r.row.classList.toggle('on', on); } }); plSave(); sync(); plRefresh(); };
-      det.append(h('summary', { style: 'padding-left:' + (6 + g.d * 14) + 'px' }, h('span', { class: 'pl-chev', html: iconHTML('chev', 14) }), cb, h('span', { class: 'pl-name' }, g.label), count), ...rows.map((r) => r.row));
-      sync();
-      return det;
-    }));
-    if (!tree.children.length) tree.append(h('p', { class: 'empty' }, query ? 'Aucun morceau trouvé.' : 'Ta bibliothèque est vide.'));
+    return all.filter((t) => (PL.folder == null || inFolder(t, PL.folder)) && (!query
+      || (/^\d{2,3}$/.test(query) ? t.bpm && Math.abs(t.bpm - +query) <= 3 : ((t.titre || '') + ' ' + (t.artiste || '') + ' ' + (t.categorie || '')).toLowerCase().includes(query))));
   };
-  q.oninput = () => { PL.q = q.value; drawTree(); };
-  wrap.append(h('div', { class: 'search' }, h('span', { html: iconHTML('search', 18), style: 'color:#A3A3AD' }), q), tree, plBar());
-  drawTree();
+  const draw = () => {
+    // fil d'Ariane + dossiers en tuiles, comme dans la Bibliothèque
+    const F = PL.folder, fl = allFolders(all);
+    const crumb = (f, label) => h('button', { type: 'button', 'aria-current': F === f ? 'page' : null, onclick: () => { PL.folder = f; draw(); $('#view').scrollTop = 0; } }, label);
+    const crumbs = h('div', { class: 'crumbs' }, crumb(null, 'Tous les dossiers'));
+    if (F === '') crumbs.append(h('span', { class: 'sep' }, '›'), crumb('', 'Sans catégorie'));
+    else if (F) F.split('/').forEach((seg, i, arr) => crumbs.append(h('span', { class: 'sep' }, '›'), crumb(arr.slice(0, i + 1).join('/'), seg)));
+    const subs = F === '' ? [] : fl.filter((c) => parentOf(c) === (F || null));
+    const tile = (f, label) => {
+      const inside = all.filter((t) => inFolder(t, f)), k = inside.filter((t) => PL.ids.includes(t.id)).length;
+      return h('button', { class: 'ftile' + (k ? ' pl-has' : ''), type: 'button', onclick: () => { PL.folder = f; draw(); $('#view').scrollTop = 0; } },
+        h('span', { class: 'ico', html: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>' }),
+        h('span', { class: 'm' }, h('span', { class: 't1' }, label), h('span', { class: 't2' }, inside.length + ' morceau' + (inside.length > 1 ? 'x' : '') + (k ? ' · ' + k + ' coché' + (k > 1 ? 's' : '') : ''))));
+    };
+    const tiles = subs.map((c) => tile(c, c.split('/').pop()));
+    if (F == null && all.some((t) => t.categorie === '')) tiles.push(tile('', 'Sans catégorie'));
+    const rows = shown();
+    const playable_ = rows.filter((t) => playable(t));
+    const allOn = playable_.length && playable_.every((t) => PL.ids.includes(t.id));
+    const acts = h('div', { class: 'factions' }, h('button', { class: 'btn small', type: 'button', disabled: !playable_.length, onclick: () => {
+      playable_.forEach((t) => plSet(t.id, !allOn)); plSave(); draw(); setCount(); plRefresh();
+    } }, ico('check', 18), allOn ? 'Tout décocher (' + rows.length + ')' : 'Tout cocher (' + playable_.length + ')'));
+    folders.replaceChildren(crumbs, ...(tiles.length ? [h('div', { class: 'ftiles' }, tiles)] : []), acts);
+    // lignes de morceaux, comme dans la Bibliothèque, avec une case à cocher
+    list.replaceChildren(...(rows.length ? rows.slice(0, 400).map((t) => {
+      const ok = playable(t), on = PL.ids.includes(t.id);
+      const c = h('input', { type: 'checkbox', 'aria-label': 'Dans la playlist : ' + t.titre }); c.checked = on; c.disabled = !ok;
+      const pos = h('span', { class: 'pl-pos' }, on ? String(PL.ids.indexOf(t.id) + 1) : '');
+      const row = h('label', { class: 'track pl-track' + (on ? ' on' : '') + (ok ? '' : ' off') }, c, coverEl(t),
+        h('span', { class: 'meta' }, h('span', { class: 't1' }, t.titre),
+          h('span', { class: 't2' }, [t.artiste, t.duree ? fmtTime(t.duree) : null].filter(Boolean).join(' · ') || (ok ? '' : 'PC injoignable'))),
+        pos, h('span', { class: 'bpm' + (t.bpm ? '' : ' wait') }, t.bpm ? t.bpm : '…'));
+      c.onchange = () => { plSet(t.id, c.checked); plSave(); draw(); setCount(); plRefresh(); };
+      return row;
+    }) : [h('div', { class: 'empty' }, PL.q ? 'Aucun morceau ne correspond.' : 'Aucun morceau dans ce dossier.')]));
+  };
+  q.oninput = () => { PL.q = q.value; draw(); };
+  if (PL.folder !== undefined && PL.folder !== null && !allFolders(all).includes(PL.folder) && PL.folder !== '') PL.folder = null;
+  draw();
   return wrap;
 }
 setInterval(() => { if (S.tab === 'playlist' && MIX.auto) { const b = $('#pl-status'); if (b) b.replaceWith(plStatus()); } }, 1000);

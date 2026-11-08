@@ -492,3 +492,13 @@ body.mix-land .hp-row{flex:1 1 100%}
 .pl-mv{width:34px;height:34px;color:var(--muted)}
 .pl-mv:disabled{opacity:.3}
 body:has(#mini:not([hidden])) .pl-bar{bottom:calc(var(--safe-b) + 132px)}
+
+/* Playlist : mêmes lignes que la Bibliothèque, avec une case à cocher */
+.pl-page{padding-bottom:92px}
+.pl-track{cursor:pointer}
+.pl-track input[type=checkbox]{width:22px;height:22px;flex:none;accent-color:var(--deckA);color-scheme:dark}
+.pl-track.on{background:color-mix(in srgb,var(--deckA) 7%,transparent)}
+.pl-track.off{opacity:.45}
+.pl-pos{min-width:18px;text-align:right;color:var(--deckA);font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.ftile.pl-has .ico{color:var(--deckA)}
+.pl-page .search{margin:0 0 12px}
