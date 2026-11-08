@@ -1758,14 +1758,14 @@ $('#sheet').addEventListener('click', (e) => { if (e.target.hasAttribute('data-c
 function ledSize(r) { return Math.max(1.6, r * 0.022); }
 function drawLeds(g, r, state, beatHz) {
   const n = r > 110 ? 48 : 36, s = ledSize(r), rr = r - s - 1.5, now = performance.now() / 1000;
-  const on = state === 'play' ? '#8FCBA6' : '#E46A6A';   // vert très doux, rouge adouci
+  const on = state === 'play' ? '#7FD6A0' : '#EC6464';   // vert et rouge doux mais présents
   for (let i = 0; i < n; i++) {
     const a = i / n * 2 * Math.PI - Math.PI / 2;
     let k;
     if (state === 'play') {   // 2 traînées lumineuses qui tournent (1 tour = 8 temps)
       const x = (((i / n - now * beatHz / 8) * 2) % 1 + 1) % 1;
-      k = 0.08 + 0.27 * Math.pow(1 - x, 2.4);   // vert très léger : 35 % au plus fort
-    } else k = state === 'stop' ? 0.62 : 0.2;   // morceau chargé à l'arrêt : rouge doux ; platine vide : rouge éteint
+      k = 0.12 + 0.43 * Math.pow(1 - x, 2.4);   // vert léger : 55 % au plus fort
+    } else k = state === 'stop' ? 0.75 : 0.22;   // morceau chargé à l'arrêt : rouge ; platine vide : rouge éteint
     g.globalAlpha = k;
     g.shadowColor = on; g.shadowBlur = 0;   // pas de halo sur le téléphone : le flou coûte cher à chaque image
     g.fillStyle = on;
@@ -1844,8 +1844,8 @@ const LEVEL = { get auto() { return localStorage.getItem('kadans.niveauAuto') !=
 const MIX = {
   ctx: null, master: null, recDest: null, xf: 0.5, recorder: null, recChunks: [], autoTimer: null,
   decks: {
-    A: { letter: 'A', color: 'var(--deckA)', hex: '#E58A62', el: null, node: null, gain: null, track: null, peaks: null, tempo: 0, cue: 0, url: null, angle: 0, bend: 0, held: false, coverImg: null },
-    B: { letter: 'B', color: 'var(--deckb)', hex: '#8FA3D9', el: null, node: null, gain: null, track: null, peaks: null, tempo: 0, cue: 0, url: null, angle: 0, bend: 0, held: false, coverImg: null },
+    A: { letter: 'A', color: 'var(--deckA)', hex: '#EE8457', el: null, node: null, gain: null, track: null, peaks: null, tempo: 0, cue: 0, url: null, angle: 0, bend: 0, held: false, coverImg: null },
+    B: { letter: 'B', color: 'var(--deckb)', hex: '#8199EE', el: null, node: null, gain: null, track: null, peaks: null, tempo: 0, cue: 0, url: null, angle: 0, bend: 0, held: false, coverImg: null },
   },
   ui: {},
   ensure() {
@@ -1902,7 +1902,7 @@ const MIX = {
     toast(d.pfl ? 'Platine ' + letter + ' en pré-écoute 🎧 (règle « Pré-écoute ↔ Mix » sous le crossfader)' : 'Pré-écoute ' + letter + ' coupée', 2200);
   },
   // ---- 3 hot cues par platine (gardés pour chaque morceau sur ce téléphone)
-  HC_COLORS: ['#D9777A', '#D6BE72', '#86C29C'],   // désaturées
+  HC_COLORS: ['#EC6E70', '#E8C25A', '#62C98C'],
   savedCues(id) {
     try { const c = JSON.parse(localStorage.getItem('kadans.hotcues') || '{}')[id]; return Array.isArray(c) && c.length === 3 ? c : [null, null, null]; }
     catch (e) { return [null, null, null]; }

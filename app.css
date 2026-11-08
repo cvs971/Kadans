@@ -502,3 +502,18 @@ body:has(#mini:not([hidden])) .pl-bar{bottom:calc(var(--safe-b) + 132px)}
 .pl-pos{min-width:18px;text-align:right;color:var(--deckA);font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
 .ftile.pl-has .ico{color:var(--deckA)}
 .pl-page .search{margin:0 0 12px}
+
+/* ---- un peu plus de couleur ---- */
+:root{--deckA:#EE8457;--deckb:#8199EE}
+.badge[style*="--dk"],#v-mix .badge,.st-badge{background:color-mix(in srgb,var(--dk) 24%,transparent);border-color:color-mix(in srgb,var(--dk) 55%,transparent)}
+.deck-play[style*="--dk"],#v-mix .deck-play{background:color-mix(in srgb,var(--dk) 24%,#1D1F25);border-color:color-mix(in srgb,var(--dk) 60%,transparent)}
+.hc,button.mx-pad{border-color:color-mix(in srgb,var(--c) 45%,transparent);color:color-mix(in srgb,var(--c) 88%,#fff)}
+.hc.set,button.mx-pad.set{background:color-mix(in srgb,var(--c) 32%,#1D1F25);border-color:var(--c);color:color-mix(in srgb,var(--c) 70%,#fff)}
+button.mx-tog.on{background:rgba(98,201,140,.16);border-color:rgba(98,201,140,.5);color:#9FE2BB}
+button.st-kill.on{background:rgba(236,100,100,.26);color:#F6AFAE}
+button.st-pfl.on,.deck-ctrl .btn.hp.on{background:rgba(162,127,230,.26);border-color:rgba(162,127,230,.6);color:#D8C6FA}
+button.mx-lp.on{background:rgba(98,201,140,.26);color:#B4E8C8}
+.chip[aria-pressed="true"]{background:rgba(238,132,87,.16);color:#F6AC88;border-color:rgba(238,132,87,.5)}
+.deckbadge.a{background:color-mix(in srgb,var(--deckA) 30%,transparent)}
+.deckbadge.b{background:color-mix(in srgb,var(--deckb) 30%,transparent)}
+.hp-row input{accent-color:#A27FE6}
