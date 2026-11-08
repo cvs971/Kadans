@@ -195,11 +195,11 @@ async function verifyWithPC(code) {
   if (d.jeton) await rememberLock(code); else forgetLock();
   return true;
 }
-function unlock() {
+function unlock(pcSaysCode = false) {
   if (LOCK.waiting) return LOCK.waiting;
   LOCK.waiting = new Promise(async (done) => {
     if (LOCK.code && (await verifyWithPC(LOCK.code)) === true) { LOCK.waiting = null; done(); return; }   // déjà tapé (hors ligne) : en silence
-    const st = await codeStateFromPC();
+    const st = pcSaysCode ? true : await codeStateFromPC();
     if (st === false || (st === null && !lockKnown())) {   // code retiré sur le PC, ou rien à protéger : on ouvre
       if (st === false) { forgetLock(); LOCK.jeton = ''; sessionStorage.removeItem('kadans.jeton'); }
       LOCK.waiting = null; done(); return;
@@ -264,6 +264,19 @@ document.addEventListener('visibilitychange', () => {
   }
   LOCK.hiddenAt = 0;
 });
+// Nouveau QR scanné / lien collé : le QR seul ne suffit JAMAIS, le code est redemandé.
+async function relinked() {
+  LOCK.code = ''; LOCK.jeton = ''; sessionStorage.removeItem('kadans.jeton');
+  await guard();
+}
+// Verrouille AVANT d'afficher : si l'iPhone sait qu'il y a un code, ou si le PC dit qu'il y en a un
+// (1re ouverture, ouverture dans Safari, nouveau QR). L'attente de la réponse du PC est limitée à 8 s.
+async function guard() {
+  if (lockKnown()) { unlock(); return; }
+  if (!S.server) return;
+  const st = await Promise.race([codeStateFromPC(), new Promise((r) => setTimeout(() => r(null), 8000))]);
+  if (st) unlock(true);
+}
 // Le PC a-t-il un code ? true / false / null (PC injoignable)
 async function codeStateFromPC() {
   if (!S.server) return null;
@@ -959,7 +972,7 @@ function askLink() {
       h('button', { class: 'btn primary', type: 'button', onclick: async () => {
         const cfg = parseLink(inp.value);
         if (!cfg) { toast('Ce lien ne vient pas de Kadans.'); return; }
-        setServer(cfg.s, cfg.k);
+        setServer(cfg.s, cfg.k); await relinked();
         closeSheet(); toast('PC relié ✓');
         await checkServer(); await refreshLibrary(); render();
       } }, 'Relier'));
@@ -1354,6 +1367,7 @@ async function scanQR() {
         if (cfg) {
           stop(); closeSheet();
           setServer(cfg.s, cfg.k);
+          await relinked();
           toast('PC relié ✓');
           await checkServer(); await refreshLibrary(); render();
           return;
@@ -1929,7 +1943,10 @@ async function tick(force) {
   if (S.server && !linked) setServer(S.server, S.key);
   await loadOffline();
   await detectSameOrigin();
-  if (lockKnown() && !LOCK.jeton) unlock();   // code d'accès : demandé dès l'ouverture (la suite attend le code)
+  // Code d'accès : redemandé à CHAQUE ouverture (un jeton gardé par iOS d'une ouverture précédente ne compte pas),
+  // et vérifié AVANT d'afficher quoi que ce soit.
+  LOCK.jeton = ''; sessionStorage.removeItem('kadans.jeton');
+  await guard();
   setTab(S.server ? (S.offline.size || S.lib.length ? 'biblio' : 'ajouter') : 'ajouter');
   if (linked) toast('PC relié ✓ Ajoute maintenant l’app à l’écran d’accueil.', 4000);
   await tick(true);
