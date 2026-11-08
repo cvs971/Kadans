@@ -102,28 +102,23 @@ const S = {
 };
 
 function readHashConfig() {
+  // Lien du QR : #s=…&k=…  — icône de l'écran d'accueil : ?s=…#k=…  (ancienne icône : ?s=…&k=…)
+  // La clé reste dans la partie après « # » : elle n'est jamais envoyée au site qui héberge l'app (GitHub).
   const hash = new URLSearchParams(location.hash.slice(1));
   const query = new URLSearchParams(location.search);
-  let src = hash.get('s') ? hash : (query.get('s') ? query : null);
-  // L'icône de l'écran d'accueil rouvre toujours l'adresse du jour où elle a été ajoutée (?s=…).
-  // On ne s'en sert qu'une fois : sinon, après un redémarrage du PC (nouvelle adresse), elle écraserait
-  // le QR rescanné et l'app resterait « Hors ligne », sans synchronisation.
-  // Donc : seulement si l'app ne connaît encore aucun PC (1re ouverture de l'icône).
-  if (src === query && S.server) {
-    src = null;
-    const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
-    history.replaceState(null, '', location.pathname + (standalone ? '' : '?' + new URLSearchParams({ s: S.server, k: S.key })));
-  }
-  if (src) {
-    const changed = src.get('s').replace(/\/$/, '') !== S.server;
-    setServer(src.get('s'), src.get('k') || '');
-    // Dans Safari, on laisse le lien du PC dans l'adresse : « Sur l'écran d'accueil » le reprend,
-    // et l'app installée est reliée au PC dès sa première ouverture.
-    const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
-    history.replaceState(null, '', location.pathname + (standalone ? '' : '?' + new URLSearchParams({ s: S.server, k: S.key })));
-    return changed;
-  }
-  return false;
+  const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+  const keep = () => location.pathname + (standalone ? '' : '?' + new URLSearchParams({ s: S.server }) + '#' + new URLSearchParams({ k: S.key }));
+  const s = hash.get('s') || query.get('s');
+  if (!s) return false;
+  const k = hash.get('k') || query.get('k') || '';
+  // L'icône rouvre toujours l'adresse du jour où elle a été ajoutée : on ne s'en sert qu'à sa 1re ouverture,
+  // sinon, après un redémarrage du PC (nouvelle adresse), elle écraserait le QR rescanné.
+  if (!hash.get('s') && S.server) { history.replaceState(null, '', keep()); return false; }
+  const changed = s.replace(/\/$/, '') !== S.server;
+  setServer(s, k);
+  // Dans Safari, on garde le lien dans l'adresse : « Sur l'écran d'accueil » le reprend pour l'icône.
+  history.replaceState(null, '', keep());
+  return changed;
 }
 function setServer(s, k) {
   S.server = s.replace(/\/$/, ''); S.key = k;
@@ -233,6 +228,18 @@ function unlock() {
   });
   return LOCK.waiting;
 }
+// Code redemandé si l'app est restée plus de 5 minutes en arrière-plan (téléphone posé, prêté…).
+// Pendant ce temps, l'écran de l'app est flouté (aperçu des apps récentes).
+document.addEventListener('visibilitychange', () => {
+  const locked = !!lockKnown();
+  document.body.classList.toggle('masque', document.hidden && locked);
+  if (document.hidden) { LOCK.hiddenAt = Date.now(); return; }
+  if (locked && LOCK.hiddenAt && Date.now() - LOCK.hiddenAt > 5 * 60 * 1000) {
+    LOCK.jeton = ''; LOCK.code = ''; sessionStorage.removeItem('kadans.jeton');
+    unlock();
+  }
+  LOCK.hiddenAt = 0;
+});
 // Le PC a-t-il un code ? true / false / null (PC injoignable)
 async function codeStateFromPC() {
   if (!S.server) return null;

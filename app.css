@@ -198,3 +198,6 @@ body.bg-img #app{background:transparent}
 .drag-ghost{position:fixed;left:0;top:0;z-index:150;pointer-events:none;padding:10px 14px;border-radius:14px;background:var(--accent);color:#0E0F12;font-weight:700;font-size:14px;max-width:70vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 10px 30px rgba(0,0,0,.5)}
 body.drag-on .ftile,body.drag-on .crumbs button[data-folder]{outline:1.5px dashed var(--line2);outline-offset:-2px}
 .ftile.drop-over,.crumbs button.drop-over{outline:2px solid var(--accent) !important;background:rgba(255,122,69,.18)}
+
+/* --- app en arrière-plan avec un code : contenu flouté --- */
+body.masque #app{filter:blur(18px)}
