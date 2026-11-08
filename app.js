@@ -666,7 +666,7 @@ async function saveOffline(item, quiet = false) {
     }
     const cover = await coverP;
     if (cover) coverCache.set(item.id, URL.createObjectURL(cover));
-    const meta = { id: item.id, titre: item.titre, artiste: item.artiste, bpm: item.bpm, duree: item.duree,
+    const meta = { id: item.id, titre: item.titre, artiste: item.artiste, bpm: item.bpm, duree: item.duree, lufs: item.lufs,
       type: item.type, ext: item.ext, source: item.source, categorie: item.categorie, ajoute: item.ajoute || Date.now() / 1000,
       taille: blob.size, garde: Date.now() };
     await DB.put(meta, blob, cover);
@@ -1661,6 +1661,34 @@ async function updateAwake() {
   }
 }
 
+// ---- niveau sonore égal : tous les morceaux joués à la même sonie (fichiers jamais modifiés)
+// Le PC mesure chaque morceau (EBU R128, en LUFS). Sinon, estimation sur l'audio déjà décodé.
+const LEVEL_TARGET = -14;   // LUFS, comme les plateformes de streaming
+function estimateLufs(buf) {   // blocs de 400 ms, porte absolue -70 et relative -10 (sans filtre K : approximation)
+  try {
+    const chs = []; for (let c = 0; c < Math.min(2, buf.numberOfChannels); c++) chs.push(buf.getChannelData(c));
+    const n = Math.floor(buf.sampleRate * 0.4), blocks = [];
+    for (let s = 0; s + n <= chs[0].length; s += n) {
+      let sum = 0;
+      for (const ch of chs) for (let i = s; i < s + n; i += 4) sum += ch[i] * ch[i];
+      blocks.push(sum / (n / 4));   // somme des canaux (comme la norme)
+    }
+    const lu = (ms) => -0.691 + 10 * Math.log10(ms || 1e-12);
+    let kept = blocks.filter((ms) => lu(ms) > -70);
+    if (!kept.length) return null;
+    const rel = lu(kept.reduce((a, b) => a + b, 0) / kept.length) - 10;
+    kept = kept.filter((ms) => lu(ms) > rel);
+    return lu(kept.reduce((a, b) => a + b, 0) / kept.length);
+  } catch (e) { return null; }
+}
+// correction en dB pour atteindre la cible (limitée à -12 / +8 dB)
+function levelGainDb(t, buf) {
+  let l = t && typeof t.lufs === 'number' ? t.lufs : null;
+  if (l == null && buf) l = estimateLufs(buf);
+  return l == null ? 0 : Math.max(-12, Math.min(8, Math.round((LEVEL_TARGET - l) * 10) / 10));
+}
+const LEVEL = { get auto() { return localStorage.getItem('kadans.niveauAuto') !== '0'; } };
+
 // ------------------------------------------------------------------ Mix : 2 platines
 const MIX = {
   ctx: null, master: null, recDest: null, xf: 0.5, recorder: null, recChunks: [], autoTimer: null,
@@ -1691,9 +1719,11 @@ const MIX = {
         d.node = this.ctx.createMediaElementSource(d.el);
         d.gain = this.ctx.createGain();
         d.an = this.ctx.createAnalyser(); d.an.fftSize = 2048;
-        d.node.connect(d.gain).connect(this.master);
+        d.lvlG = this.ctx.createGain();   // niveau sonore égal (réglé au chargement)
+        d.node.connect(d.lvlG);
+        d.lvlG.connect(d.gain).connect(this.master);
         d.node.connect(d.an);
-        d.pflG = this.ctx.createGain(); d.node.connect(d.pflG).connect(this.cueBus);
+        d.pflG = this.ctx.createGain(); d.lvlG.connect(d.pflG).connect(this.cueBus);
         d.el.addEventListener('playing', () => this.checkStream(d));
         d.el.addEventListener('error', () => this.onError(d));
         d.el.addEventListener('play', () => this.updateButtons());
@@ -1803,6 +1833,7 @@ const MIX = {
       d.url = null; d.stream = !local; d.blobP = null; d.heard = false;
       d.track = t; d.cue = 0; d.peaks = null; d.bend = 0;
       d.cues = this.savedCues(t.id);
+      this.setLevel(d, t);   // niveau mesuré par le PC (sinon estimé une fois l'audio décodé)
       if (local) { d.url = URL.createObjectURL(local); d.el.src = d.url; }
       else {   // morceau resté sur le PC : lu en direct, jamais gardé sur le téléphone
         d.el.src = fileURL(t.id);
@@ -1822,6 +1853,7 @@ const MIX = {
       const buf = await this.ctx.decodeAudioData(await blob.arrayBuffer());
       if (d.track !== t) return;
       d.peaks = this.computePeaks(buf, 600);
+      if (typeof t.lufs !== 'number') this.setLevel(d, t, buf);
       if (!d.track.duree) d.track.duree = buf.duration;
     } catch (e) { if (d.track === t && !d.stream) toast('Impossible de charger : ' + e.message); }
     if (S.tab === 'mix') this.mount();
@@ -1870,6 +1902,11 @@ const MIX = {
         h('h2', { style: 'margin:0;font-size:18px' }, 'Charger sur la platine ' + letter)),
       h('div', { class: 'search' }, h('span', { html: iconHTML('search', 18), style: 'color:#A3A3AD' }), q),
       list));
+  },
+  setLevel(d, t, buf) {
+    if (!d.lvlG) return;
+    const db = LEVEL.auto ? levelGainDb(t, buf) : 0;
+    d.lvlG.gain.value = Math.pow(10, db / 20);
   },
   computePeaks(buf, n) {
     const ch = buf.getChannelData(0), step = Math.floor(ch.length / n) || 1, out = new Float32Array(n);
@@ -2442,6 +2479,10 @@ function viewSettings() {
         right: uiToggle(S.sendAuto, (v) => { S.sendAuto = v; localStorage.setItem('kadans.sendAuto', v ? '1' : '0'); if (v) runUpload(); }, 'Envoyer automatiquement sur le PC mes mix et fichiers importés') }),
       uiRow({ icon: 'clock', tint: '#A3A3AD', title: 'En attente d’envoi', right: String(phoneOnly().length) }),
     ]),
+    uiGroup('Mix', [
+      uiRow({ icon: 'music', tint: '#86C29C', title: 'Niveau sonore égal', sub: 'Les platines jouent tous les morceaux au même volume',
+        right: uiToggle(LEVEL.auto, (v) => { localStorage.setItem('kadans.niveauAuto', v ? '1' : '0'); for (const d of Object.values(MIX.decks)) if (d.track) MIX.setLevel(d, d.track); }, 'Niveau sonore égal sur les platines') }),
+    ], 'Les fichiers ne sont jamais modifiés : seul le volume de lecture est corrigé.'),
     uiGroup('Stockage', [
       uiRow({ icon: 'music', tint: '#FF7A45', title: 'Morceaux sur l’iPhone', right: S.offline.size + ' · ' + fmtSize(total) }),
       uiRow({ icon: 'disk', tint: '#A3A3AD', title: 'Espace utilisé par l’app', right: usage }),
