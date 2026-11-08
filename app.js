@@ -160,7 +160,7 @@ async function api(path, opts = {}, retried = false) {
     await unlock();
     return api(path, opts, true);
   }
-  if (!r.ok) throw new Error(data.erreur || ('Erreur ' + r.status));
+  if (!r.ok) { const err = new Error(data.erreur || ('Erreur ' + r.status)); err.status = r.status; err.data = data; throw err; }
   return data;
 }
 const authQ = () => `k=${encodeURIComponent(S.key)}` + (LOCK.jeton ? `&j=${encodeURIComponent(LOCK.jeton)}` : '');
@@ -830,7 +830,14 @@ function viewAdd() {
       if (!/^https?:\/\//.test(url)) { toast('Colle un lien qui commence par https://'); return; }
       go.disabled = true;
       try {
-        await api('/api/telecharger', { method: 'POST', json: { url, format: S.format, categorie: S.cat } });
+        const json = { url, format: S.format, categorie: S.cat };
+        try { await api('/api/telecharger', { method: 'POST', json }); }
+        catch (e) {
+          if (e.status !== 409) throw e;   // déjà dans la bibliothèque : on demande avant de le reprendre
+          const list = (e.data.doublons || []).map((d) => '• ' + [d.artiste, d.titre].filter(Boolean).join(' - ') + (d.meme_lien ? ' (même lien)' : '')).join('\n');
+          if (!confirm('Déjà dans ta bibliothèque :\n' + list + '\n\nLe télécharger quand même ?')) { toast('Pas téléchargé : il y est déjà.'); go.disabled = false; return; }
+          await api('/api/telecharger', { method: 'POST', json: { ...json, forcer: true } });
+        }
         input.value = '';
         toast('C’est parti ! Ton PC télécharge' + (S.cat ? ' dans « ' + S.cat + ' »…' : '…'));
         await refreshJobs();
