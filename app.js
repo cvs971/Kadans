@@ -176,6 +176,8 @@ async function rememberLock(code) {   // pour pouvoir vérifier le code même PC
   localStorage.setItem('kadans.verrou', JSON.stringify({ sel, hash: await sha(sel + code) }));
 }
 function forgetLock() { localStorage.removeItem('kadans.verrou'); }
+// Réponse venant vraiment de Kadans (toujours du JSON) ? Sinon : page d'erreur du tunnel, PC injoignable.
+const fromKadans = (r) => (r.headers.get('content-type') || '').includes('application/json');
 // Envoie le code au PC. Renvoie true si accepté, un message d'erreur sinon, null si le PC ne répond pas.
 async function verifyWithPC(code) {
   if (!S.server) return null;
@@ -183,8 +185,11 @@ async function verifyWithPC(code) {
   try {
     r = await fetch(S.server + '/api/code/verifier', { method: 'POST', headers: { 'x-kadans-cle': S.key, 'content-type': 'application/json' }, body: JSON.stringify({ code }) });
   } catch (e) { return null; }
+  // Une adresse de tunnel morte renvoie une page d'erreur de Cloudflare : ce n'est PAS une réponse du PC.
+  if (!fromKadans(r)) return null;
   const d = await r.json().catch(() => ({}));
   if (r.status === 404 || r.status === 405) { forgetLock(); return true; }   // PC sans code d'accès (ancienne version)
+  if (r.status === 401) { LOCK.keyRefused = true; return null; }            // QR plus valable (clé changée sur le PC)
   if (!r.ok) return d.erreur || 'Code refusé';
   LOCK.jeton = d.jeton || ''; sessionStorage.setItem('kadans.jeton', LOCK.jeton);
   if (d.jeton) await rememberLock(code); else forgetLock();
@@ -202,11 +207,21 @@ function unlock() {
     const inp = h('input', { class: 'input lock-input', type: 'password', inputmode: 'numeric', autocomplete: 'off', maxlength: 6, 'aria-label': 'Code d’accès à 6 chiffres' });
     const err = h('p', { class: 'sub lock-err', role: 'alert' });
     const go = h('button', { class: 'btn primary', type: 'button' }, 'Ouvrir');
+    // Le PC a changé d'adresse (redémarrage, nouvelle clé) ? On peut scanner son QR d'abord, puis taper le code.
+    const rescan = h('button', { class: 'btn ghost', type: 'button', onclick: () => {
+      box.hidden = true; err.textContent = '';
+      scanQR();
+      const back = setInterval(() => {   // la fenêtre du scan est fermée : l'écran du code revient
+        if (document.querySelector('.sheet')) return;
+        clearInterval(back); box.hidden = false; LOCK.keyRefused = false;
+        err.textContent = S.server ? 'Tape ton code pour ouvrir.' : ''; setTimeout(() => inp.focus(), 50);
+      }, 400);
+    } }, 'Scanner le QR du PC');
     const box = h('div', { class: 'lock' },
       h('span', { class: 'logo', style: 'width:56px;height:56px;border-radius:16px', html: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0E0F12" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 6v12M12 9v6M16 4v16M20 10v4"/></svg>' }),
       h('h1', null, 'Kadans'),
       h('p', { class: 'sub' }, 'Tape ton code d’accès à 6 chiffres'),
-      inp, err, go);
+      inp, err, go, rescan);
     const submit = async () => {
       const code = inp.value.replace(/\D/g, '');
       if (code.length !== 6) { err.textContent = '6 chiffres'; return; }
@@ -216,7 +231,11 @@ function unlock() {
         const k = lockKnown();
         res = k ? ((await sha(k.sel + code)) === k.hash ? true : 'Code incorrect.') : 'Ton PC ne répond pas : allume-le et lance Kadans.';
       }
-      if (res === true) { LOCK.code = code; box.remove(); LOCK.waiting = null; done(); render(); return; }
+      if (res === true) {
+        LOCK.code = code; box.remove(); LOCK.waiting = null; done(); render();
+        if (LOCK.keyRefused) toast('Ce QR n’est plus valable : sur le PC, onglet iPhone, scanne le nouveau QR.', 5000);
+        return;
+      }
       err.textContent = res; inp.value = ''; go.disabled = false; inp.focus();
       box.classList.remove('shake'); void box.offsetWidth; box.classList.add('shake');
     };
@@ -245,6 +264,7 @@ async function codeStateFromPC() {
   if (!S.server) return null;
   try {
     const r = await fetch(S.server + '/api/code/etat', { headers: { 'x-kadans-cle': S.key } });
+    if (!fromKadans(r)) return null;                           // adresse morte (page d'erreur du tunnel)
     if (r.status === 404 || r.status === 405) return false;   // ancienne version de Kadans : pas de code
     if (!r.ok) return null;
     return !!(await r.json()).actif;
@@ -268,11 +288,12 @@ async function checkServer() {
   if (!S.server) { S.online = null; return; }
   try {
     const st = await api('/api/etat', { timeout: 15000 });   // ligne lente : on attend plus avant de conclure
-    S.online = true; S.pcName = st.nom_pc || ''; S.fails = 0;
+    S.online = true; S.pcName = st.nom_pc || ''; S.fails = 0; S.keyRefused = false;
     refreshLockState();
   } catch (e) {
     // une seule réponse lente ne veut pas dire « PC éteint » : hors ligne après 2 échecs de suite
     S.fails = (S.fails || 0) + 1;
+    if (e.status === 401) { S.keyRefused = true; S.online = false; }   // clé changée sur le PC : il faut rescanner le QR
     if (S.fails >= 2 || S.online == null) S.online = false;
   }
   updatePill();
@@ -800,7 +821,7 @@ function statusPill() {
   let cls = 'dot', txt = 'PC non relié';
   if (S.server) {
     if (S.online === true) { cls += ' ok'; txt = 'PC connecté'; }
-    else if (S.online === false) { cls += ' ko'; txt = 'Hors ligne'; }
+    else if (S.online === false) { cls += ' ko'; txt = S.keyRefused ? 'Rescanne le QR du PC' : 'Hors ligne'; }
     else txt = 'Connexion…';
   }
   return h('button', { class: 'pill', id: 'pill', type: 'button', onclick: () => setTab('reglages') },
