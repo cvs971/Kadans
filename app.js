@@ -1429,6 +1429,37 @@ function closeSheet() {
   if (sheetOnClose) { sheetOnClose(); sheetOnClose = null; }
 }
 $('#sheet').addEventListener('click', (e) => { if (e.target.hasAttribute('data-close')) closeSheet(); });
+// glisser la fenêtre vers le bas pour la fermer
+(() => {
+  const panel = $('#sheet .sheet-panel');
+  let y0 = 0, dy = 0, t0 = 0, on = false;
+  panel.addEventListener('touchstart', (e) => {
+    on = false;
+    if (e.touches.length !== 1 || panel.scrollTop > 0) return;
+    if (e.target.closest('input[type=range], input, textarea, select, video, canvas')) return;   // curseurs, saisie… : pas de glisser
+    y0 = e.touches[0].clientY; dy = 0; t0 = performance.now(); on = true;
+    panel.style.transition = 'none';
+  }, { passive: true });
+  panel.addEventListener('touchmove', (e) => {
+    if (!on) return;
+    dy = e.touches[0].clientY - y0;
+    if (dy <= 0 || panel.scrollTop > 0) { panel.style.transform = ''; if (dy < -6) on = false; return; }
+    e.preventDefault();
+    panel.style.transform = `translateY(${dy}px)`;
+  }, { passive: false });
+  const end = () => {
+    if (!on) return;
+    on = false;
+    const fast = dy > 40 && dy / (performance.now() - t0) > 0.6;
+    panel.style.transition = 'transform .2s ease';
+    if (dy > Math.min(140, panel.offsetHeight * 0.3) || fast) {
+      panel.style.transform = 'translateY(100%)';
+      setTimeout(() => { closeSheet(); panel.style.transition = 'none'; panel.style.transform = ''; }, 200);
+    } else panel.style.transform = '';
+  };
+  panel.addEventListener('touchend', end);
+  panel.addEventListener('touchcancel', end);
+})();
 
 // ------------------------------------------------------------------ Mix : 2 platines
 const MIX = {
