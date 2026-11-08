@@ -21,6 +21,7 @@ const ICONS = {
   video: P('<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/>'),
   a: P('<path d="M12 4v16M4 12h16"/>'),
   chev: P('<path d="M9 6l6 6-6 6"/>'),
+  playlist: P('<path d="M4 6h11M4 12h11M4 18h7M17 18V8l4-1v9"/><circle cx="15" cy="18" r="2"/>'),
   wifi: P('<path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19.5" r="1"/>'),
   qr: P('<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14h2"/>'),
   pc: P('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'),
@@ -955,7 +956,7 @@ function along(e, el) {
 function render() {
   const v = $('#view');
   v.innerHTML = '';
-  const views = { ajouter: viewAdd, biblio: viewLibrary, mix: () => MIX.view(), reglages: viewSettings };
+  const views = { ajouter: viewAdd, biblio: viewLibrary, playlist: viewPlaylist, mix: () => MIX.view(), reglages: viewSettings };
   try {
     v.append((views[S.tab] || viewAdd)());
     if (S.tab === 'biblio') renderList();
@@ -1157,6 +1158,116 @@ function askLink() {
       } }, 'Relier'));
   });
 }
+
+// ------------------------------------------------------------------ vue : Playlist
+const PL = { ids: safeList('kadans.playlist').filter((x) => typeof x === 'string'), open: new Set(), q: '', beats: +(localStorage.getItem('kadans.plBeats') || 16) };
+const plSave = () => { try { localStorage.setItem('kadans.playlist', JSON.stringify(PL.ids)); } catch (e) { /* rien */ } };
+const plAll = () => allTracks().filter((t) => t.type !== 'video');
+function plTracks() { const by = new Map(plAll().map((t) => [t.id, t])); return PL.ids.map((id) => by.get(id)).filter(Boolean); }
+function plSet(id, on) { const i = PL.ids.indexOf(id); if (on && i < 0) PL.ids.push(id); if (!on && i >= 0) PL.ids.splice(i, 1); }
+// rafraîchit l'onglet (état du mix, compteurs) sans le redessiner en entier
+function plRefresh() {
+  if (S.tab !== 'playlist') return;
+  const box = $('#pl-status'); if (box) box.replaceWith(plStatus());
+  const bar = $('#pl-bar'); if (bar) bar.replaceWith(plBar());
+}
+function plStatus() {
+  const au = MIX.auto;
+  if (!au) return h('div', { id: 'pl-status', hidden: true });
+  const cur = MIX.decks[au.cur], now = au.list[au.i], next = au.list[au.i + 1];
+  const t = cur.el ? cur.el.currentTime : 0, dur = cur.el && cur.el.duration || 0;
+  const start = cur.points ? cur.points.mixStart : dur - 16;
+  return h('div', { class: 'pl-status', id: 'pl-status' },
+    h('div', { class: 'pl-st-line' }, h('span', null, 'En cours'), h('b', null, now ? now.titre : '—'), h('em', null, 'platine ' + au.cur)),
+    next ? h('div', { class: 'pl-st-line' }, h('span', null, 'Ensuite'), h('b', null, next.titre), h('em', null, 'platine ' + (au.cur === 'A' ? 'B' : 'A'))) : null,
+    h('div', { class: 'progress' }, h('div', { style: 'width:' + (dur ? Math.min(100, t / dur * 100) : 0) + '%' })),
+    h('p', { class: 'ui-note', style: 'margin:0' }, au.fading ? 'Transition en cours… ' + Math.round(au.fade * 100) + ' %'
+      : next ? (dur ? 'Transition dans ' + fmtTime(Math.max(0, start - t)) : 'Préparation…') : 'Dernier morceau de la playlist'),
+    h('div', { class: 'pl-st-btns' },
+      h('button', { class: 'pg-btn sm', type: 'button', onclick: () => setTab('mix') }, 'Voir les platines'),
+      next ? h('button', { class: 'pg-btn sm', type: 'button', onclick: () => MIX.autoFade() }, 'Passer au suivant') : null,
+      h('button', { class: 'pg-btn sm danger', type: 'button', onclick: () => { const d = MIX.decks[MIX.auto.cur]; MIX.autoStop(); d.el.pause(); } }, 'Arrêter')));
+}
+function plBar() {
+  const list = plTracks(), total = list.reduce((a, t) => a + (t.duree || 0), 0);
+  return h('div', { class: 'pl-bar', id: 'pl-bar' },
+    h('button', { class: 'pl-bar-list', type: 'button', onclick: plSheet, disabled: !list.length },
+      h('b', null, list.length ? list.length + ' morceau' + (list.length > 1 ? 'x' : '') : 'Aucun morceau coché'),
+      h('span', null, list.length ? (fmtTime(total) || '') + ' · voir l’ordre' : 'Coche des morceaux ci-dessus')),
+    h('button', { class: 'pg-btn primary', type: 'button', disabled: !list.length, onclick: () => MIX.autoStart(plTracks(), PL.beats) },
+      MIX.auto ? 'Relancer' : 'Mixer'));
+}
+// fenêtre « Ma playlist » : ordre, options
+function plSheet() {
+  const draw = () => {
+    const list = plTracks();
+    const mk = (txt, label, fn, off) => h('button', { class: 'icon-btn pl-mv', type: 'button', 'aria-label': label, disabled: !!off, onclick: () => { fn(); body.replaceWith(draw()); plRefresh(); } }, txt);
+    const body = h('div', { class: 'pg', style: 'gap:12px' },
+      h('div', null, h('h2', { style: 'margin:0;font-size:20px' }, 'Ma playlist'), h('p', { class: 'pg-muted' }, list.length + ' morceau' + (list.length > 1 ? 'x' : '') + ' · les platines A et B s’alternent, transition juste avant que chaque morceau ne baisse.')),
+      h('div', { class: 'pl-sheet-tools' },
+        h('button', { class: 'pg-btn sm', type: 'button', onclick: () => { const by = new Map(plAll().map((t) => [t.id, t])); PL.ids.sort((a, b) => ((by.get(a) || {}).bpm || 999) - ((by.get(b) || {}).bpm || 999)); plSave(); body.replaceWith(draw()); } }, 'Trier par BPM'),
+        h('button', { class: 'pg-btn sm', type: 'button', onclick: () => { for (let i = PL.ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [PL.ids[i], PL.ids[j]] = [PL.ids[j], PL.ids[i]]; } plSave(); body.replaceWith(draw()); } }, 'Mélanger'),
+        h('button', { class: 'pg-btn sm', type: 'button', onclick: () => { PL.ids = []; plSave(); closeSheet(); render(); } }, 'Vider')),
+      h('div', { class: 'pg-seg', role: 'group', 'aria-label': 'Durée de la transition' }, [8, 16, 32].map((n) => h('button', { type: 'button', 'aria-pressed': String(PL.beats === n),
+        onclick: () => { PL.beats = n; localStorage.setItem('kadans.plBeats', String(n)); body.replaceWith(draw()); } }, 'Transition ' + n + ' temps'))),
+      h('ol', { class: 'pl-order' }, list.map((t, i) => h('li', null,
+        h('span', { class: 'pl-num' }, String(i + 1)),
+        h('span', { class: 'meta' }, h('span', { class: 't1' }, t.titre), h('span', { class: 't2' }, [t.artiste, t.bpm ? t.bpm + ' BPM' : null].filter(Boolean).join(' · '))),
+        mk('↑', 'Monter', () => { const j = PL.ids.indexOf(t.id); if (j > 0) { PL.ids.splice(j, 1); PL.ids.splice(j - 1, 0, t.id); plSave(); } }, i === 0),
+        mk('↓', 'Descendre', () => { const j = PL.ids.indexOf(t.id); if (j < PL.ids.length - 1) { PL.ids.splice(j, 1); PL.ids.splice(j + 1, 0, t.id); plSave(); } }, i === list.length - 1),
+        mk('✕', 'Retirer', () => { plSet(t.id, false); plSave(); })))),
+      h('button', { class: 'pg-btn primary', type: 'button', disabled: !list.length, onclick: () => { closeSheet(); MIX.autoStart(plTracks(), PL.beats); } }, 'Mixer ' + list.length + ' morceau' + (list.length > 1 ? 'x' : '')));
+    return body;
+  };
+  openSheet(draw, () => { if (S.tab === 'playlist') render(); });
+}
+function viewPlaylist() {
+  const wrap = h('div', { class: 'pg pl-page' });
+  wrap.append(h('header', { class: 'pg-top' }, h('h1', { class: 'pg-title' }, 'Playlist'), statusPill()));
+  wrap.append(h('p', { class: 'pg-muted', style: 'margin-top:-10px' }, 'Coche des morceaux puis « Mixer » : Kadans les enchaîne tout seul sur les platines.'));
+  wrap.append(plStatus());
+  const q = h('input', { class: 'input', type: 'search', placeholder: 'Titre, artiste…', 'aria-label': 'Chercher un morceau', value: PL.q });
+  const tree = h('div', { class: 'pl-tree' });
+  const chosen = () => new Set(PL.ids);
+  const drawTree = () => {
+    const query = PL.q.trim().toLowerCase();
+    const all = plAll().filter((t) => !query || ((t.titre || '') + ' ' + (t.artiste || '')).toLowerCase().includes(query));
+    const sorted = (l) => l.slice().sort((a, b) => ((a.artiste || '') + (a.titre || '')).localeCompare((b.artiste || '') + (b.titre || ''), 'fr'));
+    const groups = [{ key: '', label: 'Sans catégorie', d: 0, tracks: sorted(all.filter((t) => t.categorie === '')) }];
+    for (const c of S.cats.slice().sort((a, b) => a.localeCompare(b, 'fr'))) groups.push({ key: c, label: c.split('/').pop(), d: c.split('/').length - 1, tracks: sorted(all.filter((t) => t.categorie === c)) });
+    const rest = all.filter((t) => t.categorie == null || (t.categorie !== '' && !S.cats.includes(t.categorie)));
+    if (rest.length) groups.push({ key: '*autres', label: 'Autres (sur ce téléphone, autres dossiers du PC)', d: 0, tracks: sorted(rest) });
+    const sel = chosen();
+    tree.replaceChildren(...groups.filter((g) => g.tracks.length).map((g) => {
+      const n = () => g.tracks.filter((t) => PL.ids.includes(t.id)).length;
+      const det = h('details', { class: 'pl-grp' }); det.open = !!query || PL.open.has(g.key);
+      det.addEventListener('toggle', () => { if (det.open) PL.open.add(g.key); else PL.open.delete(g.key); });
+      const cb = h('input', { type: 'checkbox', 'aria-label': 'Tout le dossier ' + g.label });
+      const count = h('span', { class: 'pl-cnt' });
+      const sync = () => { const k = n(); cb.checked = k > 0 && k === g.tracks.length; cb.indeterminate = k > 0 && k < g.tracks.length; count.textContent = g.tracks.length + (k ? ' · ' + k + ' ✓' : ''); };
+      const rows = g.tracks.map((t) => {
+        const ok = playable(t);
+        const c = h('input', { type: 'checkbox', 'aria-label': t.titre });
+        c.checked = sel.has(t.id); c.disabled = !ok;
+        const row = h('label', { class: 'pl-row' + (c.checked ? ' on' : '') + (ok ? '' : ' off'), style: 'padding-left:' + (14 + g.d * 14) + 'px' }, c,
+          h('span', { class: 'meta' }, h('span', { class: 't1' }, t.titre), h('span', { class: 't2' }, [t.artiste, t.duree ? fmtTime(t.duree) : null].filter(Boolean).join(' · ') || (ok ? '' : 'PC injoignable'))),
+          h('span', { class: 'bpm' + (t.bpm ? '' : ' wait') }, t.bpm ? t.bpm : '—'));
+        c.onchange = () => { plSet(t.id, c.checked); plSave(); row.classList.toggle('on', c.checked); sync(); plRefresh(); };
+        return { t, c, row };
+      });
+      cb.onclick = (e) => { e.stopPropagation(); const on = cb.checked; rows.forEach((r) => { if (!r.c.disabled) { r.c.checked = on; plSet(r.t.id, on); r.row.classList.toggle('on', on); } }); plSave(); sync(); plRefresh(); };
+      det.append(h('summary', { style: 'padding-left:' + (6 + g.d * 14) + 'px' }, h('span', { class: 'pl-chev', html: iconHTML('chev', 14) }), cb, h('span', { class: 'pl-name' }, g.label), count), ...rows.map((r) => r.row));
+      sync();
+      return det;
+    }));
+    if (!tree.children.length) tree.append(h('p', { class: 'empty' }, query ? 'Aucun morceau trouvé.' : 'Ta bibliothèque est vide.'));
+  };
+  q.oninput = () => { PL.q = q.value; drawTree(); };
+  wrap.append(h('div', { class: 'search' }, h('span', { html: iconHTML('search', 18), style: 'color:#A3A3AD' }), q), tree, plBar());
+  drawTree();
+  return wrap;
+}
+setInterval(() => { if (S.tab === 'playlist' && MIX.auto) { const b = $('#pl-status'); if (b) b.replaceWith(plStatus()); } }, 1000);
 
 // ------------------------------------------------------------------ vue : Bibliothèque
 function viewLibrary() {
@@ -1681,6 +1792,27 @@ function estimateLufs(buf) {   // blocs de 400 ms, porte absolue -70 et relative
     return lu(kept.reduce((a, b) => a + b, 0) / kept.length);
   } catch (e) { return null; }
 }
+// ---- où mixer : début réel (après le silence) et moment où le morceau commence à baisser pour de bon
+function mixPoints(buf, bpm) {
+  try {
+    const sr = buf.sampleRate, a = buf.getChannelData(0), b = buf.numberOfChannels > 1 ? buf.getChannelData(1) : null;
+    const W = 0.5, w = Math.floor(sr * W), n = Math.floor(a.length / w);
+    if (n < 30) return null;
+    const e = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      let s = 0, c = 0;
+      for (let j = i * w; j < (i + 1) * w; j += 16) { const v = b ? (a[j] + b[j]) / 2 : a[j]; s += v * v; c++; }
+      e[i] = Math.sqrt(s / c);
+    }
+    const sm = new Float32Array(n);
+    for (let i = 0; i < n; i++) { let s = 0, c = 0; for (let k = i - 2; k <= i + 1; k++) if (k >= 0 && k < n) { s += e[k]; c++; } sm[i] = s / c; }
+    const ref = Float32Array.from(sm).sort()[Math.floor(n * 0.7)];
+    let iIn = 0; while (iIn < n * 0.3 && sm[iIn] < ref * 0.25) iIn++;
+    let iOut = n - 1; while (iOut > n * 0.5 && sm[iOut] < ref * 0.6) iOut--;
+    const beat = bpm ? 60 / bpm : 0.5, dur = buf.duration, outro = (iOut + 1) * W;
+    return { intro: Math.max(0, iIn * W - 0.25), outro, mixStart: Math.max(dur * 0.45, Math.min(outro - 8 * beat, dur - 6)) };
+  } catch (e) { return null; }
+}
 // correction en dB pour atteindre la cible (limitée à -12 / +8 dB)
 function levelGainDb(t, buf) {
   let l = t && typeof t.lufs === 'number' ? t.lufs : null;
@@ -1831,7 +1963,7 @@ const MIX = {
       d.el.pause();
       if (d.url) URL.revokeObjectURL(d.url);
       d.url = null; d.stream = !local; d.blobP = null; d.heard = false;
-      d.track = t; d.cue = 0; d.peaks = null; d.bend = 0;
+      d.track = t; d.cue = 0; d.peaks = null; d.bend = 0; d.points = null;
       d.cues = this.savedCues(t.id);
       this.setLevel(d, t);   // niveau mesuré par le PC (sinon estimé une fois l'audio décodé)
       if (local) { d.url = URL.createObjectURL(local); d.el.src = d.url; }
@@ -1853,6 +1985,7 @@ const MIX = {
       const buf = await this.ctx.decodeAudioData(await blob.arrayBuffer());
       if (d.track !== t) return;
       d.peaks = this.computePeaks(buf, 600);
+      d.points = mixPoints(buf, t.bpm);   // pour le mix auto de la Playlist
       if (typeof t.lufs !== 'number') this.setLevel(d, t, buf);
       if (!d.track.duree) d.track.duree = buf.duration;
     } catch (e) { if (d.track === t && !d.stream) toast('Impossible de charger : ' + e.message); }
@@ -2001,6 +2134,88 @@ const MIX = {
     }
     this.mount();
     toast('Platine ' + letter + ' calée sur ' + this.effBpm(o) + ' BPM', 1500);
+  },
+  // ---- mix automatique d'une playlist : les platines A et B s'alternent
+  auto: null,
+  async autoStart(list, beats) {
+    this.autoStop(true);
+    list = list.filter((t) => t && t.type !== 'video' && playable(t));
+    if (!list.length) { toast('Aucun morceau jouable (PC injoignable ?).'); return; }
+    this.ensure();
+    for (const d of Object.values(this.decks)) { d.el.pause(); clearInterval(d.homeTimer); d.tempo = 0; this.applyRate(d, true); if (d.setTempoUI) d.setTempoUI(); }
+    player.pause();
+    this.auto = { list, i: 0, cur: 'A', beats: beats || 16, fading: false, fade: 0 };
+    plRefresh();
+    toast('Mix auto : chargement du 1er morceau…', 1800);
+    await this.load('A', list[0]);
+    if (!this.auto) return;
+    const a = this.decks.A;
+    this.xf = 0; this.applyXf(); if (this.ui.xf && this.ui.xf.isConnected) this.ui.xf.value = 0;
+    try { a.el.currentTime = a.points ? a.points.intro : 0; } catch (e) { /* début */ }
+    a.el.play().catch(() => {});
+    if (list[1]) this.load('B', list[1]);
+    this.auto.timer = setInterval(() => this.autoTick(), 250);
+    plRefresh();
+  },
+  autoTick() {
+    const au = this.auto; if (!au || au.fading) return;
+    const cur = this.decks[au.cur], next = au.list[au.i + 1];
+    const dur = cur.el.duration || 0, t = cur.el.currentTime;
+    if (!next) { if (cur.el.ended || (dur && t >= dur - 0.3)) { this.autoStop(); toast('Fin de la playlist', 2500); } return; }
+    const start = cur.points ? cur.points.mixStart : (dur ? dur - 16 : Infinity);
+    if (cur.el.ended || (dur && t >= start)) this.autoFade();
+  },
+  // même tempo que le morceau en cours, calé sur le temps fort (sans changer d'écran)
+  autoMatch(nl) {
+    const d = this.decks[nl], o = this.decks[nl === 'A' ? 'B' : 'A'];
+    if (!d.track || !o.track || !d.track.bpm || !o.track.bpm) return;
+    let target = (o.track.bpm * this.rate(o)) / d.track.bpm;
+    if (target > 1.5) target /= 2; else if (target < 0.67) target *= 2;
+    d.tempo = Math.round(Math.max(-16, Math.min(16, (target - 1) * 100)) * 10) / 10;
+    this.applyRate(d, true); if (d.setTempoUI) d.setTempoUI();
+    const bo = 60 / o.track.bpm, bd = 60 / d.track.bpm;
+    let diff = (o.el.currentTime % bo) / bo - (d.el.currentTime % bd) / bd;
+    if (diff > 0.5) diff -= 1; if (diff < -0.5) diff += 1;
+    try { d.el.currentTime = Math.max(0, d.el.currentTime + diff * bd); } catch (e) { /* rien */ }
+  },
+  async autoFade() {
+    const au = this.auto; if (!au || au.fading || !au.list[au.i + 1]) return;
+    au.fading = true;
+    const cur = this.decks[au.cur], nl = au.cur === 'A' ? 'B' : 'A', nxt = this.decks[nl], want = au.list[au.i + 1];
+    if (!nxt.track || nxt.track.id !== want.id) await this.load(nl, want);
+    if (this.auto !== au) return;
+    try { nxt.el.currentTime = nxt.points ? nxt.points.intro : 0; } catch (e) { /* début */ }
+    await nxt.el.play().catch(() => {});
+    if (!cur.el.paused) this.autoMatch(nl);
+    const beat = cur.track && cur.track.bpm ? 60 / (cur.track.bpm * this.rate(cur)) : 0.5;
+    const left = Math.max(1, (cur.el.duration || 0) - cur.el.currentTime - 0.3);
+    const dur = Math.max(3, Math.min(au.beats * beat, left, 30)) * 1000;
+    const from = this.xf, to = nl === 'B' ? 1 : 0, t0 = performance.now();
+    clearInterval(this.autoTimer);
+    this.autoTimer = setInterval(() => {
+      if (this.auto !== au) { clearInterval(this.autoTimer); return; }
+      const k = Math.min(1, (performance.now() - t0) / dur);
+      au.fade = k;
+      this.xf = from + (to - from) * k; this.applyXf();
+      if (this.ui.xf && this.ui.xf.isConnected) this.ui.xf.value = Math.round(this.xf * 100);
+      if (k < 1) return;
+      clearInterval(this.autoTimer);
+      cur.el.pause();
+      this.tempoHome(nxt);
+      au.i++; au.cur = nl; au.fading = false; au.fade = 0;
+      clearInterval(cur.homeTimer); cur.tempo = 0; this.applyRate(cur, true); if (cur.setTempoUI) cur.setTempoUI();
+      const after = au.list[au.i + 1];
+      if (after) this.load(cur.letter, after);
+      plRefresh();
+    }, 50);
+    plRefresh();
+  },
+  autoStop(quiet) {
+    const was = this.auto;
+    if (was) clearInterval(was.timer);
+    clearInterval(this.autoTimer);
+    this.auto = null;
+    if (was && !quiet) plRefresh();
   },
   automix() {
     const A = this.decks.A, B = this.decks.B;
@@ -2267,7 +2482,10 @@ const MIX = {
   },
   view() {
     const xf = h('input', { id: 'xfade', type: 'range', min: 0, max: 100, value: Math.round(this.xf * 100) });
-    xf.oninput = () => { clearInterval(this.autoTimer); this.xf = xf.value / 100; this.applyXf(); };
+    xf.oninput = () => {
+      if (this.auto) { this.autoStop(); toast('Mix auto arrêté : tu as pris la main.', 2200); }
+      clearInterval(this.autoTimer); this.xf = xf.value / 100; this.applyXf();
+    };
     this.ui.xf = xf;
     this.ui.recTxt = h('span', null, this.recorder ? 'Arrêter' : 'Enregistrer');
     this.ui.rec = h('button', { class: 'btn small' + (this.recorder ? ' rec-on' : ''), type: 'button', onclick: () => this.toggleRec() }, h('span', { class: 'rec-dot' }), this.ui.recTxt);
