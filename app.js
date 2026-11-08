@@ -1635,7 +1635,7 @@ function drawLeds(g, r, state, beatHz) {
       k = 0.08 + 0.27 * Math.pow(1 - x, 2.4);   // vert très léger : 35 % au plus fort
     } else k = state === 'stop' ? 0.62 : 0.2;   // morceau chargé à l'arrêt : rouge doux ; platine vide : rouge éteint
     g.globalAlpha = k;
-    g.shadowColor = on; g.shadowBlur = state === 'play' ? 0 : (k > 0.5 ? s * 1.4 : 0);   // vert : sans halo ; rouge : halo léger
+    g.shadowColor = on; g.shadowBlur = 0;   // pas de halo sur le téléphone : le flou coûte cher à chaque image
     g.fillStyle = on;
     g.beginPath(); g.arc(r + Math.cos(a) * rr, r + Math.sin(a) * rr, s, 0, 7); g.fill();
   }
@@ -1762,6 +1762,33 @@ const MIX = {
     }
   },
   rate(d) { return 1 + d.tempo / 100; },
+  // iPhone : chaque changement de vitesse (avec tonalité gardée) coupe le son un instant.
+  // On regroupe donc les changements : au plus ~3 par seconde, et la valeur finale au relâchement.
+  applyRate(d, now) {
+    if (!d.el) return;
+    clearTimeout(d.rateT);
+    const t = performance.now(), wait = 320 - (t - (d.rateAt || 0));
+    if (now || wait <= 0) {
+      d.rateAt = t;
+      const want = this.rate(d) * (1 + d.bend);
+      if (Math.abs(d.el.playbackRate - want) > 1e-4) d.el.playbackRate = want;
+    } else d.rateT = setTimeout(() => this.applyRate(d, true), wait);
+  },
+  // après l'auto-mix : retour doucement au tempo d'origine, par petits paliers (peu de changements = pas de saccades)
+  tempoHome(d) {
+    clearInterval(d.homeTimer);
+    const start = d.tempo;
+    if (Math.abs(start) < 0.05) return;
+    const steps = Math.max(2, Math.min(12, Math.round(Math.abs(start) / 0.4)));   // paliers de ~0,4 %
+    let n = 0;
+    d.homeTimer = setInterval(() => {
+      n++;
+      d.tempo = n >= steps ? 0 : Math.round(start * (1 - n / steps) * 10) / 10;
+      this.applyRate(d, true);
+      if (d.setTempoUI) d.setTempoUI();
+      if (n >= steps) clearInterval(d.homeTimer);
+    }, 1500);
+  },
   effBpm(d) { return d.track && d.track.bpm ? (d.track.bpm * this.rate(d)).toFixed(1).replace('.0', '') : '—'; },
   async load(letter, t) {
     this.ensure();
@@ -1918,6 +1945,7 @@ const MIX = {
     else { d.cue = d.el.currentTime; toast('Point CUE placé à ' + fmtTime(d.cue), 1200); }
   },
   sync(letter) {
+    clearInterval(this.decks[letter].homeTimer);   // SYNC à la main : plus de retour automatique
     const d = this.decks[letter], o = this.decks[letter === 'A' ? 'B' : 'A'];
     if (!d.track || !o.track || !d.track.bpm || !o.track.bpm) { toast('Les deux platines doivent avoir un BPM.'); return; }
     let target = (o.track.bpm * this.rate(o)) / d.track.bpm;
@@ -1949,9 +1977,9 @@ const MIX = {
       const k = Math.min(1, (performance.now() - t0) / dur);
       this.xf = start + (end - start) * k; this.applyXf();
       if (this.ui.xf) this.ui.xf.value = Math.round(this.xf * 100);
-      if (k >= 1) { clearInterval(this.autoTimer); from.el.pause(); }
+      if (k >= 1) { clearInterval(this.autoTimer); from.el.pause(); this.tempoHome(to); }
     }, 50);
-    toast('Auto-mix : transition sur 12 secondes', 1800);
+    toast('Auto-mix : transition sur 12 secondes, puis retour au tempo normal', 2200);
   },
   toggleRec() {
     this.ensure();
@@ -2011,12 +2039,19 @@ const MIX = {
     const lbl = h('label', { for: id }, 'Tempo ' + (d.tempo >= 0 ? '+' : '') + d.tempo.toFixed(1).replace('.', ',') + ' %');
     const slider = h('input', { id, type: 'range', min: -16, max: 16, step: 0.1, value: d.tempo, style: 'accent-color:' + d.hex });
     const bpmEl = h('b', null, this.effBpm(d));
-    slider.oninput = () => {
-      d.tempo = +slider.value;
-      if (d.el) d.el.playbackRate = this.rate(d) * (1 + d.bend);
+    d.setTempoUI = () => {
+      if (!slider.isConnected) return;
+      slider.value = d.tempo;
       lbl.textContent = 'Tempo ' + (d.tempo >= 0 ? '+' : '') + d.tempo.toFixed(1).replace('.', ',') + ' %';
       bpmEl.textContent = this.effBpm(d);
     };
+    slider.oninput = () => {
+      clearInterval(d.homeTimer);   // la main reprend le tempo : plus de retour automatique
+      d.tempo = +slider.value;
+      this.applyRate(d);
+      d.setTempoUI();
+    };
+    slider.onchange = () => this.applyRate(d, true);   // relâché : la valeur finale tout de suite
     slider.ondblclick = () => { slider.value = 0; slider.oninput(); };
     // le vinyle : tourne pendant la lecture, se manipule au doigt
     const disc = h('canvas', { 'aria-hidden': 'true' });
