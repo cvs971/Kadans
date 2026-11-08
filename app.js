@@ -192,6 +192,12 @@ function probeWifi(force) {
   })().finally(() => { wifiProbing = null; });
   return wifiProbing;
 }
+// Requête au PC : par le Wi-Fi s'il répond, sinon par Internet
+async function pcFetch(path, init) {
+  const via = base();
+  try { return await fetch(via + path, init); }
+  catch (e) { if (via !== S.server) { wifiLost(); return fetch(S.server + path, init); } throw e; }
+}
 function wifiLost() { if (WIFI.base) { WIFI.base = null; WIFI.tried = Date.now(); updatePill(); } }
 
 async function api(path, opts = {}, retried = false) {
@@ -241,7 +247,7 @@ async function verifyWithPC(code) {
   if (!S.server) return null;
   let r;
   try {
-    r = await fetch(S.server + '/api/code/verifier', { method: 'POST', headers: { 'x-kadans-cle': S.key, 'content-type': 'application/json' }, body: JSON.stringify({ code }) });
+    r = await pcFetch('/api/code/verifier', { method: 'POST', headers: { 'x-kadans-cle': S.key, 'content-type': 'application/json' }, body: JSON.stringify({ code }) });
   } catch (e) { return null; }
   // Une adresse de tunnel morte renvoie une page d'erreur de Cloudflare : ce n'est PAS une réponse du PC.
   if (!fromKadans(r)) return null;
@@ -344,7 +350,7 @@ async function guard() {
 async function codeStateFromPC() {
   if (!S.server) return null;
   try {
-    const r = await fetch(S.server + '/api/code/etat', { headers: { 'x-kadans-cle': S.key } });
+    const r = await pcFetch('/api/code/etat', { headers: { 'x-kadans-cle': S.key } });
     if (!fromKadans(r)) return null;                           // adresse morte (page d'erreur du tunnel)
     if (r.status === 404 || r.status === 405) return false;   // ancienne version de Kadans : pas de code
     if (!r.ok) return null;
@@ -372,6 +378,8 @@ async function checkServer() {
     S.online = true; S.pcName = st.nom_pc || ''; S.fails = 0; S.keyRefused = false;
     refreshLockState();
     if ('wifi' in st) setWifiInfo(st.wifi);   // ancienne version de Kadans : pas de Wi-Fi direct
+    // le PC a redémarré et changé d'adresse Internet : on retient la nouvelle (plus besoin de rescanner le QR)
+    if (st.tunnel && st.tunnel.startsWith('https://') && st.tunnel.replace(/\/$/, '') !== S.server) setServer(st.tunnel, S.key);
     probeWifi();
   } catch (e) {
     // une seule réponse lente ne veut pas dire « PC éteint » : hors ligne après 2 échecs de suite
@@ -2278,6 +2286,7 @@ async function tick(force) {
   // Code d'accès : redemandé à CHAQUE ouverture (un jeton gardé par iOS d'une ouverture précédente ne compte pas),
   // et vérifié AVANT d'afficher quoi que ce soit.
   LOCK.jeton = ''; sessionStorage.removeItem('kadans.jeton');
+  if (WIFI.info && S.server) await probeWifi(true);   // à la maison : le PC est joignable par le Wi-Fi, même s'il a changé d'adresse Internet
   await guard();
   probeWifi(true);   // à la maison : Wi-Fi direct dès que possible (sans retarder l'ouverture)
   setTab(S.server ? (S.offline.size || S.lib.length ? 'biblio' : 'ajouter') : 'ajouter');
