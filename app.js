@@ -1626,16 +1626,16 @@ $('#sheet').addEventListener('click', (e) => { if (e.target.hasAttribute('data-c
 function ledSize(r) { return Math.max(1.6, r * 0.022); }
 function drawLeds(g, r, state, beatHz) {
   const n = r > 110 ? 48 : 36, s = ledSize(r), rr = r - s - 1.5, now = performance.now() / 1000;
-  const on = state === 'play' ? '#7FD9A3' : '#FF4A4A';   // vert doux (moins agressif que le rouge)
+  const on = state === 'play' ? '#8FCBA6' : '#FF4A4A';   // vert très doux (moins agressif que le rouge)
   for (let i = 0; i < n; i++) {
     const a = i / n * 2 * Math.PI - Math.PI / 2;
     let k;
     if (state === 'play') {   // 2 traînées lumineuses qui tournent (1 tour = 8 temps)
       const x = (((i / n - now * beatHz / 8) * 2) % 1 + 1) % 1;
-      k = 0.12 + 0.43 * Math.pow(1 - x, 2.4);   // vert léger : 55 % au plus fort
+      k = 0.08 + 0.27 * Math.pow(1 - x, 2.4);   // vert très léger : 35 % au plus fort
     } else k = state === 'stop' ? 0.9 : 0.28;   // morceau chargé à l'arrêt : rouge vif ; platine vide : rouge éteint
     g.globalAlpha = k;
-    g.shadowColor = on; g.shadowBlur = state === 'play' ? (k > 0.4 ? s * 1.2 : 0) : (k > 0.5 ? s * 3 : 0);
+    g.shadowColor = on; g.shadowBlur = state === 'play' ? 0 : (k > 0.5 ? s * 3 : 0);   // vert : sans halo
     g.fillStyle = on;
     g.beginPath(); g.arc(r + Math.cos(a) * rr, r + Math.sin(a) * rr, s, 0, 7); g.fill();
   }
