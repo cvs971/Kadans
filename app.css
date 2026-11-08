@@ -203,3 +203,37 @@ body.drag-on .ftile,body.drag-on .crumbs button[data-folder]{outline:1.5px dashe
 body.masque #app{filter:blur(18px)}
 /* scan du QR depuis l'écran du code : la fenêtre du scan passe AU-DESSUS (l'écran du code reste dessous) */
 body.sheet-over-lock #sheet{z-index:300}
+
+/* --- Mix en paysage : 2 petites platines côte à côte, crossfader dessous --- */
+.xf-btns{display:flex;gap:8px;justify-content:center}
+.rec-land{display:none}
+body.mix-land #app{max-width:none}
+/* téléphone tenu à la verticale : l'écran Mix pivote de 90° (il suffit de tourner le téléphone) */
+body.mix-rot #app{position:fixed;top:0;left:0;width:100vh;height:100vw;transform-origin:top left;transform:rotate(90deg) translateY(-100%)}
+body.mix-land #mini{display:none !important}
+body.mix-land #view{padding:max(8px,var(--safe-t)) max(12px,env(safe-area-inset-right,0px)) 6px max(12px,env(safe-area-inset-left,0px))}
+body.mix-land .mixtop,body.mix-land .mixhelp{display:none}
+body.mix-land .mixgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+body.mix-land .deck{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"plat head" "plat wave" "plat ctrl" "trans trans";gap:6px 10px;padding:8px 10px;margin:0;border-radius:16px}
+body.mix-land .deck-head{grid-area:head;gap:8px}
+body.mix-land .platter{grid-area:plat;width:108px;margin:0;align-self:center}
+body.mix-land .wave{grid-area:wave;height:32px;border-radius:8px}
+body.mix-land .deck-ctrl{grid-area:ctrl;gap:6px}
+body.mix-land .transport{grid-area:trans;gap:5px}
+body.mix-land .badge{width:26px;height:26px;font-size:13px;border-radius:8px}
+body.mix-land .big-bpm b{font-size:18px}
+body.mix-land .deck .t1{font-size:13px}
+body.mix-land .deck .t2{font-size:11px}
+body.mix-land .deck-play{width:36px;height:36px;border-radius:10px}
+body.mix-land .deck-ctrl .btn{height:32px;padding:0 9px;font-size:12px;border-radius:10px}
+body.mix-land .transport .btn.small{height:30px;min-width:32px;padding:0 7px;font-size:13px;border-radius:9px}
+body.mix-land .transport .bend .btn{width:32px}
+body.mix-land .tempo label{font-size:10px}
+body.mix-land .xfader{margin-top:8px;padding:6px 12px;flex-direction:row;align-items:center;gap:12px;border-radius:16px}
+body.mix-land .xfader .ends{display:none}
+body.mix-land .xfader input{flex:1;height:26px}
+body.mix-land .xfader .btn.small{height:32px;font-size:12px}
+body.mix-land .rec-land{display:inline-flex;align-items:center;gap:6px}
+body.mix-land .tabs{padding:2px 8px max(2px,var(--safe-b))}
+body.mix-land .tabs button{min-height:32px;font-size:10px;gap:1px}
+body.mix-land .tabs .ico svg{width:18px;height:18px}

@@ -800,11 +800,28 @@ const noCover = new Set();   // morceaux sans pochette sur le PC
 // ------------------------------------------------------------------ navigation
 function setTab(tab) {
   S.tab = tab;
+  mixOrientation();
   document.querySelectorAll('.tabs button').forEach((b) => {
     if (b.dataset.tab === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   render();
   $('#view').scrollTop = 0;
+}
+// ---- Mix en paysage : vraie rotation si le système le permet (Android), sinon l'écran Mix pivote de 90°
+// tout seul quand le téléphone est tenu à la verticale (iPhone : une app web ne peut pas forcer la rotation).
+const LAND = matchMedia('(orientation: landscape)');
+function mixOrientation() {
+  const mix = S.tab === 'mix';
+  document.body.classList.toggle('mix-land', mix);
+  document.body.classList.toggle('mix-rot', mix && !LAND.matches);
+  try { if (mix && screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (e) { /* non pris en charge */ }
+  try { if (!mix && screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) { /* idem */ }
+}
+LAND.addEventListener ? LAND.addEventListener('change', mixOrientation) : LAND.addListener(mixOrientation);
+// position horizontale (0 à 1) d'un doigt sur un élément, même quand l'écran Mix est pivoté
+function along(e, el) {
+  const r = el.getBoundingClientRect();
+  return document.body.classList.contains('mix-rot') ? (e.clientY - r.top) / r.height : (e.clientX - r.left) / r.width;
 }
 function render() {
   const v = $('#view');
@@ -1558,6 +1575,10 @@ const MIX = {
       this.ui.rec.classList.toggle('rec-on', !!this.recorder);
       this.ui.recTxt.textContent = this.recorder ? 'Arrêter' : 'Enregistrer';
     }
+    if (this.ui.recLand) {   // le même bouton, placé sous le crossfader en mode paysage
+      this.ui.recLand.classList.toggle('rec-on', !!this.recorder);
+      this.ui.recLand.lastChild.textContent = this.recorder ? 'Arrêter' : 'Enreg.';
+    }
   },
   deckView(d) {
     const t = d.track;
@@ -1565,8 +1586,7 @@ const MIX = {
     const wave = h('div', { class: 'wave' }, canvas, t ? null : h('span', { class: 'hint' }, 'Bibliothèque → « … » → Platine ' + d.letter));
     wave.addEventListener('pointerdown', (e) => {
       if (!t || !d.el.duration) return;
-      const r = wave.getBoundingClientRect();
-      d.el.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * d.el.duration;
+      d.el.currentTime = Math.max(0, Math.min(1, along(e, wave))) * d.el.duration;
     });
     this.ui['canvas' + d.letter] = canvas;
     const play = h('button', { class: 'deck-play', type: 'button', style: 'background:' + d.color, 'aria-label': 'Lecture platine ' + d.letter,
@@ -1734,17 +1754,17 @@ const MIX = {
     this.ui.xf = xf;
     this.ui.recTxt = h('span', null, this.recorder ? 'Arrêter' : 'Enregistrer');
     this.ui.rec = h('button', { class: 'btn small' + (this.recorder ? ' rec-on' : ''), type: 'button', onclick: () => this.toggleRec() }, h('span', { class: 'rec-dot' }), this.ui.recTxt);
-    return h('div', null,
-      h('div', { class: 'top' }, h('h1', null, 'Mix'), this.ui.rec),
-      this.deckView(this.decks.A),
-      this.deckView(this.decks.B),
+    return h('div', { class: 'mixwrap' },
+      h('div', { class: 'top mixtop' }, h('h1', null, 'Mix'), this.ui.rec),
+      h('div', { class: 'mixgrid' }, this.deckView(this.decks.A), this.deckView(this.decks.B)),
       h('div', { class: 'xfader' },
         h('div', { class: 'ends' }, h('span', null, 'A'), h('label', { for: 'xfade' }, 'Crossfader'), h('span', null, 'B')),
         xf,
-        h('div', { style: 'display:flex;gap:8px;justify-content:center' },
+        h('div', { class: 'xf-btns' },
           h('button', { class: 'btn small', type: 'button', onclick: () => this.automix() }, 'Auto-mix'),
-          h('button', { class: 'btn small', type: 'button', onclick: () => { this.xf = 0.5; xf.value = 50; this.applyXf(); } }, 'Centre'))),
-      h('p', { class: 'sub', style: 'text-align:center;margin-top:14px' }, 'Tourne le disque au doigt pour avancer / reculer. En lecture, le bord du disque freine ou pousse. Double-tape un curseur Tempo pour le remettre à 0.'));
+          h('button', { class: 'btn small', type: 'button', onclick: () => { this.xf = 0.5; xf.value = 50; this.applyXf(); } }, 'Centre'),
+          this.ui.recLand = h('button', { class: 'btn small rec-land' + (this.recorder ? ' rec-on' : ''), type: 'button', onclick: () => this.toggleRec() }, h('span', { class: 'rec-dot' }), this.recorder ? 'Arrêter' : 'Enreg.'))),
+      h('p', { class: 'sub mixhelp', style: 'text-align:center;margin-top:14px' }, 'Tourne le disque au doigt pour avancer / reculer. En lecture, le bord du disque freine ou pousse. Double-tape un curseur Tempo pour le remettre à 0.'));
   },
   mount() {
     const v = $('#view');
