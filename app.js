@@ -20,6 +20,9 @@ const ICONS = {
   phone: P('<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>'),
   video: P('<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/>'),
   a: P('<path d="M12 4v16M4 12h16"/>'),
+  close: P('<path d="M6 6l12 12M18 6L6 18"/>'),
+  down: P('<path d="M6 9l6 6 6-6"/>'),
+  stop: '<svg width="SZ" height="SZ" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
   link: P('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
 };
 function iconHTML(name, size = 22) { return (ICONS[name] || '').replaceAll('SZ', size); }
@@ -1303,6 +1306,19 @@ function updateMini() {
 }
 $('#mini-play').onclick = () => { if (player.paused) { player.play(); MIX.pauseAll(); } else player.pause(); };
 $('#mini-open').onclick = () => openFull();
+$('#mini-close').innerHTML = iconHTML('close', 20);
+$('#mini-close').onclick = () => stopPlayer();
+// arrêter la lecture et faire disparaître le lecteur de l'écran
+function stopPlayer() {
+  player.pause();
+  player.removeAttribute('src'); player.load();
+  if (playerURL && playerURL.startsWith('blob:')) URL.revokeObjectURL(playerURL);
+  playerURL = null;
+  S.current = null; S.queue = []; S.index = -1;
+  if (fullUI.play) closeSheet();
+  try { if ('mediaSession' in navigator) navigator.mediaSession.metadata = null; } catch (e) { /* rien */ }
+  updateMini(); refreshTrackRows();
+}
 function mediaSession(t) {
   if (!('mediaSession' in navigator)) return;
   navigator.mediaSession.metadata = new MediaMetadata({ title: t.titre, artist: t.artiste || 'Kadans', album: 'Kadans' });
@@ -1324,6 +1340,9 @@ function openFull() {
     fullUI.play = h('button', { class: 'play-big', type: 'button', 'aria-label': 'Lecture / pause', html: iconHTML(player.paused ? 'play' : 'pause', 30),
       onclick: () => (player.paused ? player.play() : player.pause()) });
     return h('div', { class: 'full' },
+      h('div', { class: 'full-top' },
+        h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Fermer (la musique continue)', html: iconHTML('down', 26), onclick: () => closeSheet() }),
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => stopPlayer() }, h('span', { class: 'ico', html: iconHTML('stop', 16) }), 'Arrêter')),
       coverEl(t, 'lg'),
       h('div', { class: 'titles' }, h('div', { style: 'min-width:0' }, h('h2', null, t.titre), h('div', { class: 't2' }, t.artiste || '')),
         t.bpm ? h('div', { class: 'big-bpm' }, h('b', null, t.bpm), h('span', null, 'BPM')) : null),

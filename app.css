@@ -241,3 +241,6 @@ body.mix-land .tabs .ico svg{width:18px;height:18px}
 body.mix-rot #sheet{inset:auto;top:0;left:0;width:100vh;height:100vw;transform-origin:top left;transform:rotate(90deg) translateY(-100%)}
 body.mix-rot .sheet-panel{max-height:92vw}
 body.mix-land .deck-load{width:30px;height:30px}
+/* lecteur plein écran : fermer (la musique continue) / arrêter */
+.full-top{display:flex;justify-content:space-between;align-items:center;margin:-6px -4px -8px}
+.full-top .btn .ico{display:inline-grid;margin-right:4px}
