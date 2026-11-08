@@ -1626,16 +1626,16 @@ $('#sheet').addEventListener('click', (e) => { if (e.target.hasAttribute('data-c
 function ledSize(r) { return Math.max(1.6, r * 0.022); }
 function drawLeds(g, r, state, beatHz) {
   const n = r > 110 ? 48 : 36, s = ledSize(r), rr = r - s - 1.5, now = performance.now() / 1000;
-  const on = state === 'play' ? '#8FCBA6' : '#FF4A4A';   // vert très doux (moins agressif que le rouge)
+  const on = state === 'play' ? '#8FCBA6' : '#E46A6A';   // vert très doux, rouge adouci
   for (let i = 0; i < n; i++) {
     const a = i / n * 2 * Math.PI - Math.PI / 2;
     let k;
     if (state === 'play') {   // 2 traînées lumineuses qui tournent (1 tour = 8 temps)
       const x = (((i / n - now * beatHz / 8) * 2) % 1 + 1) % 1;
       k = 0.08 + 0.27 * Math.pow(1 - x, 2.4);   // vert très léger : 35 % au plus fort
-    } else k = state === 'stop' ? 0.9 : 0.28;   // morceau chargé à l'arrêt : rouge vif ; platine vide : rouge éteint
+    } else k = state === 'stop' ? 0.62 : 0.2;   // morceau chargé à l'arrêt : rouge doux ; platine vide : rouge éteint
     g.globalAlpha = k;
-    g.shadowColor = on; g.shadowBlur = state === 'play' ? 0 : (k > 0.5 ? s * 3 : 0);   // vert : sans halo
+    g.shadowColor = on; g.shadowBlur = state === 'play' ? 0 : (k > 0.5 ? s * 1.4 : 0);   // vert : sans halo ; rouge : halo léger
     g.fillStyle = on;
     g.beginPath(); g.arc(r + Math.cos(a) * rr, r + Math.sin(a) * rr, s, 0, 7); g.fill();
   }
@@ -1672,7 +1672,11 @@ const MIX = {
       const AC = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AC();
       this.master = this.ctx.createGain();
-      this.master.connect(this.ctx.destination);
+      // Casque seul (Bluetooth ou jack) : quand une platine est en pré-écoute 🎧, la sortie mélange
+      // la pré-écoute et le mix (réglage « Pré-écoute ↔ Mix »). L'enregistrement garde le mix seul.
+      this.outMst = this.ctx.createGain(); this.cueBus = this.ctx.createGain(); this.outCue = this.ctx.createGain();
+      this.master.connect(this.outMst).connect(this.ctx.destination);
+      this.cueBus.connect(this.outCue).connect(this.ctx.destination);
       if (this.ctx.createMediaStreamDestination) {
         this.recDest = this.ctx.createMediaStreamDestination();
         this.master.connect(this.recDest);
@@ -1687,15 +1691,58 @@ const MIX = {
         d.an = this.ctx.createAnalyser(); d.an.fftSize = 2048;
         d.node.connect(d.gain).connect(this.master);
         d.node.connect(d.an);
+        d.pflG = this.ctx.createGain(); d.node.connect(d.pflG).connect(this.cueBus);
         d.el.addEventListener('playing', () => this.checkStream(d));
         d.el.addEventListener('error', () => this.onError(d));
         d.el.addEventListener('play', () => this.updateButtons());
         ['play', 'pause', 'ended'].forEach((ev) => d.el.addEventListener(ev, () => updateAwake()));
         d.el.addEventListener('pause', () => this.updateButtons());
       }
-      this.applyXf();
+      this.applyXf(); this.applyCue();
     }
     if (this.ctx.state === 'suspended') this.ctx.resume();
+  },
+  hpMix: 0.3,   // 0 = pré-écoute seule, 1 = mix seul
+  applyCue() {
+    if (!this.ctx) return;
+    const any = Object.values(this.decks).some((d) => d.pfl);
+    for (const d of Object.values(this.decks)) if (d.pflG) d.pflG.gain.value = d.pfl ? 1 : 0;
+    this.outMst.gain.value = any ? this.hpMix : 1;
+    this.outCue.gain.value = any ? 1 - this.hpMix : 0;
+  },
+  togglePfl(letter) {
+    this.ensure();
+    const d = this.decks[letter];
+    d.pfl = !d.pfl; this.applyCue();
+    const b = this.ui['pfl' + letter]; if (b) b.classList.toggle('on', d.pfl);
+    if (this.ui.hpRow) this.ui.hpRow.classList.toggle('on', Object.values(this.decks).some((x) => x.pfl));
+    toast(d.pfl ? 'Platine ' + letter + ' en pré-écoute 🎧 (règle « Pré-écoute ↔ Mix » sous le crossfader)' : 'Pré-écoute ' + letter + ' coupée', 2200);
+  },
+  // ---- 3 hot cues par platine (gardés pour chaque morceau sur ce téléphone)
+  HC_COLORS: ['#FF6B6B', '#FFD54A', '#5BD69A'],
+  savedCues(id) {
+    try { const c = JSON.parse(localStorage.getItem('kadans.hotcues') || '{}')[id]; return Array.isArray(c) && c.length === 3 ? c : [null, null, null]; }
+    catch (e) { return [null, null, null]; }
+  },
+  saveCues(d) {
+    if (!d.track) return;
+    try {
+      const all = JSON.parse(localStorage.getItem('kadans.hotcues') || '{}');
+      if (d.cues.some((c) => c != null)) all[d.track.id] = d.cues; else delete all[d.track.id];
+      localStorage.setItem('kadans.hotcues', JSON.stringify(all));
+    } catch (e) { /* stockage plein : gardés pour cette séance */ }
+  },
+  hotcue(letter, i, erase) {
+    const d = this.decks[letter];
+    if (!d.track || !d.el) { toast('Charge d’abord un morceau sur la platine ' + letter + '.'); return; }
+    if (!d.cues) d.cues = [null, null, null];
+    if (erase) { if (d.cues[i] == null) return; d.cues[i] = null; toast('Hot cue ' + (i + 1) + ' effacé', 1200); }
+    else if (d.cues[i] == null) d.cues[i] = Math.round(d.el.currentTime * 1000) / 1000;
+    else { this.ensure(); d.el.currentTime = d.cues[i]; }
+    this.saveCues(d); this.drawHc(d);
+  },
+  drawHc(d) {
+    (this.ui['hc' + d.letter] || []).forEach((b, i) => b.classList.toggle('set', !!(d.cues && d.cues[i] != null)));
   },
   applyXf() {
     const x = this.xf;
@@ -1726,6 +1773,7 @@ const MIX = {
       if (d.url) URL.revokeObjectURL(d.url);
       d.url = null; d.stream = !local; d.blobP = null; d.heard = false;
       d.track = t; d.cue = 0; d.peaks = null; d.bend = 0;
+      d.cues = this.savedCues(t.id);
       if (local) { d.url = URL.createObjectURL(local); d.el.src = d.url; }
       else {   // morceau resté sur le PC : lu en direct, jamais gardé sur le téléphone
         d.el.src = fileURL(t.id);
@@ -2002,7 +2050,20 @@ const MIX = {
       h('div', { class: 'deck-ctrl' }, play,
         h('button', { class: 'btn', type: 'button', onclick: () => this.cue(d.letter) }, 'CUE'),
         h('button', { class: 'btn ghost', type: 'button', onclick: () => this.sync(d.letter) }, 'SYNC'),
+        this.ui['pfl' + d.letter] = h('button', { class: 'btn ghost hp' + (d.pfl ? ' on' : ''), type: 'button', 'aria-label': 'Pré-écoute de la platine ' + d.letter + ' au casque',
+          html: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/></svg>',
+          onclick: () => this.togglePfl(d.letter) }),
         h('div', { class: 'tempo' }, lbl, slider)),
+      h('div', { class: 'hc-row' }, ...(this.ui['hc' + d.letter] = this.HC_COLORS.map((c, i) => {
+        const b = h('button', { class: 'hc' + (d.cues && d.cues[i] != null ? ' set' : ''), type: 'button', style: '--c:' + c,
+          'aria-label': 'Hot cue ' + (i + 1) + ' (toucher : placer / y aller ; appui long : effacer)' }, String(i + 1));
+        let t = 0, long = false;
+        b.addEventListener('pointerdown', () => { long = false; clearTimeout(t); t = setTimeout(() => { long = true; this.hotcue(d.letter, i, true); }, 600); });
+        ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => b.addEventListener(ev, () => clearTimeout(t)));
+        b.addEventListener('click', () => { if (!long) this.hotcue(d.letter, i, false); });
+        b.addEventListener('contextmenu', (e) => e.preventDefault());
+        return b;
+      }))),
       h('div', { class: 'transport' }, rew, ff,
         h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Reculer de 4 temps', onclick: () => this.jump(d, -4) }, '−4'),
         h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Avancer de 4 temps', onclick: () => this.jump(d, 4) }, '+4'),
@@ -2145,6 +2206,12 @@ const MIX = {
           this.ui.xvolA = h('span', { class: 'xf-vol', style: 'color:' + this.decks.A.hex }, 'A ' + this.vol('A') + ' %'),
           xf,
           this.ui.xvolB = h('span', { class: 'xf-vol', style: 'color:' + this.decks.B.hex + ';text-align:right' }, 'B ' + this.vol('B') + ' %')),
+        (() => {
+          const r = h('input', { type: 'range', min: 0, max: 100, value: Math.round(this.hpMix * 100), 'aria-label': 'Casque : pré-écoute ou mix' });
+          r.oninput = () => { this.hpMix = r.value / 100; this.applyCue(); };
+          return this.ui.hpRow = h('div', { class: 'hp-row' + (Object.values(this.decks).some((x) => x.pfl) ? ' on' : '') },
+            h('span', null, '🎧 Pré-écoute'), r, h('span', null, 'Mix'));
+        })(),
         h('div', { class: 'xf-btns' },
           h('button', { class: 'btn small', type: 'button', onclick: () => this.automix() }, 'Auto-mix'),
           h('button', { class: 'btn small', type: 'button', onclick: () => { this.xf = 0.5; xf.value = 50; this.applyXf(); } }, 'Centre'),
@@ -2184,6 +2251,10 @@ const MIX = {
         } else if (d.track) {
           g.fillStyle = '#3A3E47'; g.fillRect(0, hh / 2 - 1, w, 2);
         }
+        if (d.track && dur && d.cues) d.cues.forEach((c, i) => {
+          if (c == null) return;
+          g.fillStyle = this.HC_COLORS[i]; g.fillRect((c / dur) * w - 1, 0, 2, hh);
+        });
         if (d.track) {
           g.fillStyle = '#F4F2EE'; g.fillRect(pos * w - 1, 0, 2, hh);
           if (dur) { g.fillStyle = d.hex; g.fillRect((d.cue / dur) * w - 1, 0, 2, 6); }
