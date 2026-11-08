@@ -145,21 +145,108 @@ function parseLink(text) {
 }
 
 // ------------------------------------------------------------------ serveur
-async function api(path, opts = {}) {
+async function api(path, opts = {}, retried = false) {
   if (!S.server) throw new Error('PC non relié');
-  const headers = { 'x-kadans-cle': S.key, ...(opts.headers || {}) };
+  const headers = { 'x-kadans-cle': S.key, ...(LOCK.jeton ? { 'x-kadans-jeton': LOCK.jeton } : {}), ...(opts.headers || {}) };
   if (opts.json) { headers['content-type'] = 'application/json'; opts.body = JSON.stringify(opts.json); }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), opts.timeout || 12000);
+  let r;
   try {
-    const r = await fetch(S.server + path, { method: opts.method || 'GET', headers, body: opts.body, signal: ctrl.signal });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.erreur || ('Erreur ' + r.status));
-    return data;
+    r = await fetch(S.server + path, { method: opts.method || 'GET', headers, body: opts.body, signal: ctrl.signal });
   } finally { clearTimeout(timer); }
+  const data = await r.json().catch(() => ({}));
+  if (r.status === 423 && !retried) {   // le PC demande le code d'accès : on le demande, puis on recommence
+    await unlock();
+    return api(path, opts, true);
+  }
+  if (!r.ok) throw new Error(data.erreur || ('Erreur ' + r.status));
+  return data;
 }
-const fileURL = (id) => `${S.server}/api/fichier/${id}?k=${encodeURIComponent(S.key)}`;
-const coverURL = (id) => `${S.server}/api/pochette/${id}?k=${encodeURIComponent(S.key)}`;
+const authQ = () => `k=${encodeURIComponent(S.key)}` + (LOCK.jeton ? `&j=${encodeURIComponent(LOCK.jeton)}` : '');
+const fileURL = (id) => `${S.server}/api/fichier/${id}?${authQ()}`;
+const coverURL = (id) => `${S.server}/api/pochette/${id}?${authQ()}`;
+
+// ------------------------------------------------------------------ code d'accès à 6 chiffres
+// Choisi sur le PC (onglet iPhone). Demandé à chaque ouverture de l'app ; vérifié par le PC.
+// Sans le PC (hors ligne), il est vérifié sur l'iPhone pour ouvrir la musique gardée.
+const LOCK = { jeton: sessionStorage.getItem('kadans.jeton') || '', code: '', waiting: null };
+const lockKnown = () => { try { return JSON.parse(localStorage.getItem('kadans.verrou') || 'null'); } catch (e) { return null; } };
+async function sha(text) {
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+async function rememberLock(code) {   // pour pouvoir vérifier le code même PC éteint
+  const sel = [...crypto.getRandomValues(new Uint8Array(16))].map((x) => x.toString(16).padStart(2, '0')).join('');
+  localStorage.setItem('kadans.verrou', JSON.stringify({ sel, hash: await sha(sel + code) }));
+}
+function forgetLock() { localStorage.removeItem('kadans.verrou'); }
+// Envoie le code au PC. Renvoie true si accepté, un message d'erreur sinon, null si le PC ne répond pas.
+async function verifyWithPC(code) {
+  if (!S.server) return null;
+  let r;
+  try {
+    r = await fetch(S.server + '/api/code/verifier', { method: 'POST', headers: { 'x-kadans-cle': S.key, 'content-type': 'application/json' }, body: JSON.stringify({ code }) });
+  } catch (e) { return null; }
+  const d = await r.json().catch(() => ({}));
+  if (r.status === 404 || r.status === 405) { forgetLock(); return true; }   // PC sans code d'accès (ancienne version)
+  if (!r.ok) return d.erreur || 'Code refusé';
+  LOCK.jeton = d.jeton || ''; sessionStorage.setItem('kadans.jeton', LOCK.jeton);
+  if (d.jeton) await rememberLock(code); else forgetLock();
+  return true;
+}
+function unlock() {
+  if (LOCK.waiting) return LOCK.waiting;
+  LOCK.waiting = new Promise(async (done) => {
+    if (LOCK.code && (await verifyWithPC(LOCK.code)) === true) { LOCK.waiting = null; done(); return; }   // déjà tapé (hors ligne) : en silence
+    const st = await codeStateFromPC();
+    if (st === false || (st === null && !lockKnown())) {   // code retiré sur le PC, ou rien à protéger : on ouvre
+      if (st === false) { forgetLock(); LOCK.jeton = ''; sessionStorage.removeItem('kadans.jeton'); }
+      LOCK.waiting = null; done(); return;
+    }
+    const inp = h('input', { class: 'input lock-input', type: 'password', inputmode: 'numeric', autocomplete: 'off', maxlength: 6, 'aria-label': 'Code d’accès à 6 chiffres' });
+    const err = h('p', { class: 'sub lock-err', role: 'alert' });
+    const go = h('button', { class: 'btn primary', type: 'button' }, 'Ouvrir');
+    const box = h('div', { class: 'lock' },
+      h('span', { class: 'logo', style: 'width:56px;height:56px;border-radius:16px', html: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0E0F12" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 6v12M12 9v6M16 4v16M20 10v4"/></svg>' }),
+      h('h1', null, 'Kadans'),
+      h('p', { class: 'sub' }, 'Tape ton code d’accès à 6 chiffres'),
+      inp, err, go);
+    const submit = async () => {
+      const code = inp.value.replace(/\D/g, '');
+      if (code.length !== 6) { err.textContent = '6 chiffres'; return; }
+      go.disabled = true; err.textContent = '';
+      let res = await verifyWithPC(code);
+      if (res === null) {   // PC éteint : on vérifie sur l'iPhone
+        const k = lockKnown();
+        res = k ? ((await sha(k.sel + code)) === k.hash ? true : 'Code incorrect.') : 'Ton PC ne répond pas : allume-le et lance Kadans.';
+      }
+      if (res === true) { LOCK.code = code; box.remove(); LOCK.waiting = null; done(); render(); return; }
+      err.textContent = res; inp.value = ''; go.disabled = false; inp.focus();
+      box.classList.remove('shake'); void box.offsetWidth; box.classList.add('shake');
+    };
+    inp.oninput = () => { inp.value = inp.value.replace(/\D/g, '').slice(0, 6); if (inp.value.length === 6) submit(); };
+    inp.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+    go.onclick = submit;
+    document.body.append(box);
+    setTimeout(() => inp.focus(), 50);
+  });
+  return LOCK.waiting;
+}
+// Le PC a-t-il un code ? true / false / null (PC injoignable)
+async function codeStateFromPC() {
+  if (!S.server) return null;
+  try {
+    const r = await fetch(S.server + '/api/code/etat', { headers: { 'x-kadans-cle': S.key } });
+    if (r.status === 404 || r.status === 405) return false;   // ancienne version de Kadans : pas de code
+    if (!r.ok) return null;
+    return !!(await r.json()).actif;
+  } catch (e) { return null; }
+}
+// Si le code a été retiré sur le PC, l'iPhone ne le demande plus.
+async function refreshLockState() {
+  if ((await codeStateFromPC()) === false) { forgetLock(); LOCK.jeton = ''; sessionStorage.removeItem('kadans.jeton'); }
+}
 
 async function detectSameOrigin() {
   // L'app est-elle servie directement par le PC (ex. ouverte sur le PC) ?
@@ -175,6 +262,7 @@ async function checkServer() {
   try {
     const st = await api('/api/etat', { timeout: 6000 });
     S.online = true; S.pcName = st.nom_pc || '';
+    refreshLockState();
   } catch (e) { S.online = false; }
   updatePill();
 }
@@ -501,7 +589,7 @@ async function uploadToPC(meta) {
   if (!blob) throw new Error('fichier absent');
   const name = ((meta.artiste ? meta.artiste + ' - ' : '') + (meta.titre || 'morceau')).replace(/[\\/:*?"<>|]/g, '_') + '.' + (meta.ext || 'm4a');
   const q = new URLSearchParams({ id: meta.id, nom: name, titre: meta.titre || '' });
-  const r = await fetch(`${S.server}/api/envoyer?${q}`, { method: 'POST', headers: { 'x-kadans-cle': S.key }, body: blob });
+  const r = await fetch(`${S.server}/api/envoyer?${q}`, { method: 'POST', headers: { 'x-kadans-cle': S.key, ...(LOCK.jeton ? { 'x-kadans-jeton': LOCK.jeton } : {}) }, body: blob });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.erreur || 'erreur ' + r.status);
   meta.pcId = d.fichier_id;
@@ -615,7 +703,7 @@ function coverEl(t, cls = '') {
     (t.titre || '?').trim().charAt(0).toUpperCase());
   const add = (src) => {
     const img = h('img', { src, alt: '', style: 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover' });
-    img.onerror = () => { img.remove(); noCover.add(t.id); };   // ne plus la redemander au PC
+    img.onerror = () => { img.remove(); if (!LOCK.waiting) noCover.add(t.id); };   // ne plus la redemander au PC (sauf si le code est demandé)
     el.append(img);
   };
   if (coverCache.has(t.id)) { const u = coverCache.get(t.id); if (u) add(u); }
@@ -1694,6 +1782,7 @@ async function tick(force) {
   if (S.server && !linked) setServer(S.server, S.key);
   await loadOffline();
   await detectSameOrigin();
+  if (lockKnown() && !LOCK.jeton) unlock();   // code d'accès : demandé dès l'ouverture (la suite attend le code)
   setTab(S.server ? (S.offline.size || S.lib.length ? 'biblio' : 'ajouter') : 'ajouter');
   if (linked) toast('PC relié ✓ Ajoute maintenant l’app à l’écran d’accueil.', 4000);
   await tick(true);
