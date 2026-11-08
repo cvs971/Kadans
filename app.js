@@ -260,10 +260,14 @@ async function detectSameOrigin() {
 async function checkServer() {
   if (!S.server) { S.online = null; return; }
   try {
-    const st = await api('/api/etat', { timeout: 6000 });
-    S.online = true; S.pcName = st.nom_pc || '';
+    const st = await api('/api/etat', { timeout: 15000 });   // ligne lente : on attend plus avant de conclure
+    S.online = true; S.pcName = st.nom_pc || ''; S.fails = 0;
     refreshLockState();
-  } catch (e) { S.online = false; }
+  } catch (e) {
+    // une seule réponse lente ne veut pas dire « PC éteint » : hors ligne après 2 échecs de suite
+    S.fails = (S.fails || 0) + 1;
+    if (S.fails >= 2 || S.online == null) S.online = false;
+  }
   updatePill();
 }
 async function refreshLibrary() {
@@ -275,7 +279,7 @@ async function refreshLibrary() {
     S.online = true;
     localStorage.setItem('kadans.lib', JSON.stringify(S.lib.slice(0, 3000)));
     await refreshCats();
-  } catch (e) { S.online = false; }
+  } catch (e) { /* liste pas reçue cette fois : on garde la précédente (checkServer décide si le PC est joignable) */ }
   updatePill();
 }
 async function refreshCats() {
@@ -432,25 +436,45 @@ async function loadOffline() {
   } catch (e) { console.warn(e); }
 }
 
+// Transfert robuste pour une connexion lente ou qui coupe : si ça bloque ou casse, on reprend
+// là où on en était (en-tête Range) au lieu de tout recommencer. Jusqu'à 8 reprises.
 async function fetchWithProgress(url, onProgress) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('Téléchargement impossible (' + r.status + ')');
-  const total = +r.headers.get('content-length') || 0;
-  if (!r.body || !total) return r.blob();
-  const reader = r.body.getReader();
-  const chunks = []; let got = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value); got += value.length;
-    onProgress(Math.round(got * 100 / total));
+  const chunks = []; let got = 0, total = 0, type = '';
+  for (let attempt = 0; attempt < 8; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, Math.min(15000, 1500 * attempt)));
+    const ctrl = new AbortController();
+    let stall = setTimeout(() => ctrl.abort(), 45000);   // rien reçu pendant 45 s : on relance
+    try {
+      const r = await fetch(url, { signal: ctrl.signal, headers: got ? { Range: `bytes=${got}-` } : {} });
+      if (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) throw Object.assign(new Error('Téléchargement impossible (' + r.status + ')'), { fatal: true });
+      if (!r.ok) throw new Error('Erreur ' + r.status);
+      if (got && r.status !== 206) { chunks.length = 0; got = 0; }   // le PC a renvoyé tout le fichier : on repart de zéro
+      type = type || r.headers.get('content-type') || '';
+      const len = +r.headers.get('content-length') || 0;
+      if (!total) total = got + len;
+      if (!r.body) { chunks.push(new Uint8Array(await r.arrayBuffer())); return new Blob(chunks, { type }); }
+      const reader = r.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        clearTimeout(stall); stall = setTimeout(() => ctrl.abort(), 45000);
+        chunks.push(value); got += value.length;
+        if (total) onProgress(Math.min(99, Math.round(got * 100 / total)));
+      }
+      clearTimeout(stall);
+      if (!total || got >= total) { onProgress(100); return new Blob(chunks, { type }); }
+      // coupé avant la fin : on reprend au tour suivant
+    } catch (e) {
+      clearTimeout(stall);
+      if (e.fatal) throw e;
+    }
   }
-  return new Blob(chunks, { type: r.headers.get('content-type') || '' });
+  throw new Error('connexion trop lente ou coupée (' + (total ? Math.round(got * 100 / total) + ' % reçus' : 'rien reçu') + ')');
 }
 
 async function saveOffline(item, quiet = false) {
-  if (S.offline.has(item.id) || S.saving.has(item.id)) return;
-  if (!S.online) { toast('Ton PC doit être allumé pour garder ce morceau.'); return; }
+  if (S.offline.has(item.id) || S.saving.has(item.id)) return true;
+  if (S.online === false && !quiet) { toast('Ton PC doit être allumé pour garder ce morceau.'); return false; }
   S.saving.set(item.id, 0);
   laterRefresh();
   try {
@@ -472,9 +496,11 @@ async function saveOffline(item, quiet = false) {
     S.offline.set(item.id, meta);
     if (S.excl[item.id]) markExcl([item.id], false);
     if (!quiet) toast('« ' + item.titre + ' » est sur ton iPhone ✓');
+    return true;
   } catch (e) {
     if (!quiet) toast('Échec : ' + e.message);
     else SYNC.errors++;
+    return false;
   } finally {
     S.saving.delete(item.id);
     laterRefresh();
@@ -489,17 +515,20 @@ function laterRefresh() {
 function showProgress(id, p) {
   document.querySelectorAll(`[data-pct="${CSS.escape(id)}"]`).forEach((e) => { e.textContent = p + '%'; });
 }
-// Transfère plusieurs morceaux en parallèle (3 à la fois : bien plus rapide via le tunnel).
+// Transfère plusieurs morceaux en parallèle (2 à la fois : plus rapide, sans étouffer une connexion lente).
+// Un contrôle de connexion raté n'arrête plus tout : on n'abandonne que si un transfert échoue ET que le PC
+// ne répond vraiment plus.
 async function saveMany(list, onEach, keepGoing = () => true) {
   const queue = [...list];
   const worker = async () => {
-    while (queue.length && S.online && keepGoing()) {
+    while (queue.length && keepGoing()) {
       const t = queue.shift();
-      await saveOffline(t, true);
+      const ok = await saveOffline(t, true);
       if (onEach) onEach(t);
+      if (!ok && S.online === false) break;
     }
   };
-  await Promise.all([worker(), worker(), worker()]);
+  await Promise.all([worker(), worker()]);
 }
 // Retire des morceaux de l'iPhone SEULEMENT : les fichiers du PC ne sont jamais touchés,
 // et le PC ne les renverra plus à la synchronisation (sauf si tu les recoches sur le PC).
@@ -574,7 +603,11 @@ async function runSync() {
   SYNC.running = true; SYNC.done = 0; SYNC.errors = 0; SYNC.total = todo.length;
   renderSyncBanner();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+  // l'écran reste allumé pendant la synchro (sinon l'iPhone met l'app en pause et tout s'arrête)
+  let wake = null;
+  try { if (navigator.wakeLock) wake = await navigator.wakeLock.request('screen'); } catch (e) { /* pas disponible */ }
   await saveMany(todo, () => { SYNC.done++; renderSyncBanner(); }, () => SYNC.running);
+  try { if (wake) await wake.release(); } catch (e) { /* déjà libéré */ }
   const ok = SYNC.done - SYNC.errors;
   SYNC.running = false;
   await reportIphone();
@@ -1840,17 +1873,22 @@ window.addEventListener('hashchange', async () => {
   if (readHashConfig()) { toast('PC relié ✓'); await checkServer(); await refreshLibrary(); render(); }
 });
 
-let ticks = 0;
+let ticks = 0, ticking = false;
 async function tick(force) {
   if (document.hidden || !S.server) return;
-  ticks++;
-  const active = S.jobs.some((j) => !['termine', 'erreur'].includes(j.etat));
-  if (force || ticks % 6 === 0 || S.online !== true) {
-    await checkServer();
-    if (S.online) { await refreshLibrary(); await refreshSync(); }
-    if (S.tab === 'biblio') refreshTrackRows();
-  }
-  if (active || force || ticks % 6 === 0) await refreshJobs();
+  if (ticking) return;   // ligne lente : on n'empile pas les vérifications (elles encombreraient la connexion)
+  ticking = true;
+  try {
+    ticks++;
+    const active = S.jobs.some((j) => !['termine', 'erreur'].includes(j.etat));
+    if (force || ticks % 6 === 0 || S.online !== true) {
+      await checkServer();
+      // pendant la synchro, on ne recharge pas toute la bibliothèque : la connexion sert aux morceaux
+      if (S.online) { if (!SYNC.running || force) await refreshLibrary(); await refreshSync(); }
+      if (S.tab === 'biblio') refreshTrackRows();
+    }
+    if (active || force || ticks % 6 === 0) await refreshJobs();
+  } finally { ticking = false; }
 }
 
 (async function start() {
