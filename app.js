@@ -229,7 +229,11 @@ async function api(path, opts = {}, retried = false) {
   return data;
 }
 const authQ = () => `k=${encodeURIComponent(S.key)}` + (LOCK.jeton ? `&j=${encodeURIComponent(LOCK.jeton)}` : '');
-const fileURL = (id) => `${base()}/api/fichier/${id}?${authQ()}`;
+// niv : 1 = lecture (copie au bon niveau si elle est prête), 2 = garder sur le téléphone (on attend la copie)
+const fileURL = (id, niv) => `${base()}/api/fichier/${id}?${authQ()}` + (niv ? '&niveau=' + niv : '');
+// Bibliothèque au même niveau : le PC (Kadans 1.6.1 ou plus) envoie une copie au volume déjà corrigé
+const verGE = (v, w) => { const a = String(v || '0').split('.').map(Number), b = w.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0); } return true; };
+const LIBNORM = () => localStorage.getItem('kadans.niveauBiblio') !== '0' && verGE(S.pcVersion, '1.6.1');
 const coverURL = (id) => `${base()}/api/pochette/${id}?${authQ()}`;
 
 // ------------------------------------------------------------------ code d'accès à 6 chiffres
@@ -381,7 +385,7 @@ async function checkServer() {
   if (!S.server) { S.online = null; return; }
   try {
     const st = await api('/api/etat', { timeout: 15000 });   // ligne lente : on attend plus avant de conclure
-    S.online = true; S.pcName = st.nom_pc || ''; S.fails = 0; S.keyRefused = false;
+    S.online = true; S.pcName = st.nom_pc || ''; S.pcVersion = st.version || ''; S.fails = 0; S.keyRefused = false;
     refreshLockState();
     if ('wifi' in st) setWifiInfo(st.wifi);   // ancienne version de Kadans : pas de Wi-Fi direct
     // le PC a redémarré et changé d'adresse Internet : on retient la nouvelle (plus besoin de rescanner le QR)
@@ -571,10 +575,12 @@ async function fetchRange(url, start, end, onBytes, info) {
   for (let attempt = 0; attempt < tries; attempt++) {
     if (attempt) await new Promise((r) => setTimeout(r, Math.min(15000, 1500 * attempt)));
     const ctrl = new AbortController();
-    let stall = setTimeout(() => ctrl.abort(), WIFI.base && url.startsWith(WIFI.base) ? 8000 : 45000);   // rien reçu : on relance
+    const quiet = WIFI.base && url.startsWith(WIFI.base) ? 8000 : 45000;   // plus rien reçu pendant ce temps : on relance
+    let stall = setTimeout(() => ctrl.abort(), 60000);   // 1re réponse : le PC peut d'abord préparer la copie au bon niveau
     try {
       const to = end == null ? '' : end;
       const r = await fetch(url, { signal: ctrl.signal, headers: { Range: `bytes=${start + got}-${to}` } });
+      clearTimeout(stall); stall = setTimeout(() => ctrl.abort(), quiet);
       if (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) throw Object.assign(new Error('Téléchargement impossible (' + r.status + ')'), { fatal: true });
       if (!r.ok) throw new Error('Erreur ' + r.status);
       if (r.status !== 206) {   // le PC renvoie tout le fichier d'un coup
@@ -600,7 +606,7 @@ async function fetchRange(url, start, end, onBytes, info) {
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
-          clearTimeout(stall); stall = setTimeout(() => ctrl.abort(), 45000);
+          clearTimeout(stall); stall = setTimeout(() => ctrl.abort(), quiet);
           parts.push(value); got += value.length; onBytes(value.length);
         }
       }
@@ -659,17 +665,18 @@ async function saveOffline(item, quiet = false) {
     };
     let blob;
     const viaWifi = !!WIFI.base;   // retenu ici : une autre requête peut remarquer avant nous que le Wi-Fi a décroché
-    try { blob = await fetchWithProgress(fileURL(item.id), onP); }
+    const niv = LIBNORM();   // copie au bon niveau (le PC la prépare si besoin)
+    try { blob = await fetchWithProgress(fileURL(item.id, niv ? 2 : 0), onP); }
     catch (e) {   // le Wi-Fi a décroché (sortie de la maison…) : on reprend par Internet
       if (!viaWifi || e.fatal) throw e;
       wifiLost(); last = 0;
-      blob = await fetchWithProgress(fileURL(item.id), onP);
+      blob = await fetchWithProgress(fileURL(item.id, niv ? 2 : 0), onP);
     }
     const cover = await coverP;
     if (cover) coverCache.set(item.id, URL.createObjectURL(cover));
     const meta = { id: item.id, titre: item.titre, artiste: item.artiste, bpm: item.bpm, duree: item.duree, lufs: item.lufs,
       type: item.type, ext: item.ext, source: item.source, categorie: item.categorie, ajoute: item.ajoute || Date.now() / 1000,
-      taille: blob.size, garde: Date.now() };
+      taille: blob.size, garde: Date.now(), niv };
     await DB.put(meta, blob, cover);
     S.offline.set(item.id, meta);
     if (S.excl[item.id]) markExcl([item.id], false);
@@ -1526,7 +1533,7 @@ async function sourceFor(t) {
     const blob = await DB.getFile(t.id);
     if (blob) return URL.createObjectURL(blob);
   }
-  if (S.online) return fileURL(t.id);
+  if (S.online) return fileURL(t.id, LIBNORM() ? 1 : 0);
   throw new Error('Pas sur l’iPhone et PC injoignable.');
 }
 async function playTrack(t, list) {
@@ -1965,6 +1972,7 @@ const MIX = {
       d.url = null; d.stream = !local; d.blobP = null; d.heard = false;
       d.track = t; d.cue = 0; d.peaks = null; d.bend = 0; d.points = null;
       d.cues = this.savedCues(t.id);
+      d.leveled = !!(local && (S.offline.get(t.id) || {}).niv);   // copie déjà au bon niveau : pas de 2e correction
       this.setLevel(d, t);   // niveau mesuré par le PC (sinon estimé une fois l'audio décodé)
       if (local) { d.url = URL.createObjectURL(local); d.el.src = d.url; }
       else {   // morceau resté sur le PC : lu en direct, jamais gardé sur le téléphone
@@ -2038,7 +2046,7 @@ const MIX = {
   },
   setLevel(d, t, buf) {
     if (!d.lvlG) return;
-    const db = LEVEL.auto ? levelGainDb(t, buf) : 0;
+    const db = LEVEL.auto && !d.leveled ? levelGainDb(t, buf) : 0;
     d.lvlG.gain.value = Math.pow(10, db / 20);
   },
   computePeaks(buf, n) {
@@ -2700,7 +2708,9 @@ function viewSettings() {
     uiGroup('Mix', [
       uiRow({ icon: 'music', tint: '#86C29C', title: 'Niveau sonore égal', sub: 'Les platines jouent tous les morceaux au même volume',
         right: uiToggle(LEVEL.auto, (v) => { localStorage.setItem('kadans.niveauAuto', v ? '1' : '0'); for (const d of Object.values(MIX.decks)) if (d.track) MIX.setLevel(d, d.track); }, 'Niveau sonore égal sur les platines') }),
-    ], 'Les fichiers ne sont jamais modifiés : seul le volume de lecture est corrigé.'),
+      uiRow({ icon: 'music', tint: '#86C29C', title: 'Bibliothèque au même niveau', sub: verGE(S.pcVersion, '1.6.1') ? 'Lecture et morceaux gardés : copies au bon volume préparées par le PC' : 'Demande Kadans 1.6.1 ou plus sur le PC',
+        right: uiToggle(localStorage.getItem('kadans.niveauBiblio') !== '0', (v) => localStorage.setItem('kadans.niveauBiblio', v ? '1' : '0'), 'Bibliothèque au même niveau sonore') }),
+    ], 'Les fichiers ne sont jamais modifiés : seul le volume de lecture est corrigé. Les morceaux déjà gardés sur l’iPhone restent comme avant (retire-les puis garde-les à nouveau pour les mettre au même niveau).'),
     uiGroup('Stockage', [
       uiRow({ icon: 'music', tint: '#FF7A45', title: 'Morceaux sur l’iPhone', right: S.offline.size + ' · ' + fmtSize(total) }),
       uiRow({ icon: 'disk', tint: '#A3A3AD', title: 'Espace utilisé par l’app', right: usage }),
