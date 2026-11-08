@@ -208,14 +208,19 @@ function unlock() {
     const err = h('p', { class: 'sub lock-err', role: 'alert' });
     const go = h('button', { class: 'btn primary', type: 'button' }, 'Ouvrir');
     // Le PC a changé d'adresse (redémarrage, nouvelle clé) ? On peut scanner son QR d'abord, puis taper le code.
+    // L'écran du code n'est JAMAIS caché : c'est la fenêtre du scan qui passe au-dessus de lui, le temps du scan.
+    // Scan réussi, annulé ou en erreur : l'écran du code reste là tant que le bon code n'est pas tapé.
     const rescan = h('button', { class: 'btn ghost', type: 'button', onclick: () => {
-      box.hidden = true; err.textContent = '';
+      err.textContent = '';
+      document.body.classList.add('sheet-over-lock');
       scanQR();
-      const back = setInterval(() => {   // la fenêtre du scan est fermée : l'écran du code revient
-        if (document.querySelector('.sheet')) return;
-        clearInterval(back); box.hidden = false; LOCK.keyRefused = false;
+      const back = setInterval(() => {
+        if (!$('#sheet').hidden) return;   // fenêtre du scan encore ouverte
+        clearInterval(back);
+        document.body.classList.remove('sheet-over-lock');
+        LOCK.keyRefused = false;
         err.textContent = S.server ? 'Tape ton code pour ouvrir.' : ''; setTimeout(() => inp.focus(), 50);
-      }, 400);
+      }, 300);
     } }, 'Scanner le QR du PC');
     const box = h('div', { class: 'lock' },
       h('span', { class: 'logo', style: 'width:56px;height:56px;border-radius:16px', html: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0E0F12" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 6v12M12 9v6M16 4v16M20 10v4"/></svg>' }),

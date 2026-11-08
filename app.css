@@ -201,3 +201,5 @@ body.drag-on .ftile,body.drag-on .crumbs button[data-folder]{outline:1.5px dashe
 
 /* --- app en arrière-plan avec un code : contenu flouté --- */
 body.masque #app{filter:blur(18px)}
+/* scan du QR depuis l'écran du code : la fenêtre du scan passe AU-DESSUS (l'écran du code reste dessous) */
+body.sheet-over-lock #sheet{z-index:300}
