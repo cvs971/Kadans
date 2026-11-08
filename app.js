@@ -20,6 +20,18 @@ const ICONS = {
   phone: P('<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>'),
   video: P('<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/>'),
   a: P('<path d="M12 4v16M4 12h16"/>'),
+  chev: P('<path d="M9 6l6 6-6 6"/>'),
+  qr: P('<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14h2"/>'),
+  pc: P('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'),
+  off: P('<path d="M3 3l18 18M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 5-2.7M14 10.3A10 10 0 0 1 19 13M2 9.5a15 15 0 0 1 4.5-2.8M10.5 5.1A15 15 0 0 1 22 9.5"/><circle cx="12" cy="20" r="1"/>'),
+  clip: P('<rect x="8" y="3" width="8" height="4" rx="1"/><path d="M16 5h2a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2"/>'),
+  folder: P('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
+  up: P('<path d="M12 20V9M7 14l5-5 5 5M5 4h14"/>'),
+  clock: P('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  disk: P('<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>'),
+  sun: P('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/>'),
+  palette: P('<path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 21 9.8C21 6 17 3 12 3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7" r="1"/>'),
+  image: P('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>'),
   close: P('<path d="M6 6l12 12M18 6L6 18"/>'),
   down: P('<path d="M6 9l6 6 6-6"/>'),
   stop: '<svg width="SZ" height="SZ" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
@@ -213,7 +225,7 @@ function unlock(pcSaysCode = false) {
     // Le PC a changé d'adresse (redémarrage, nouvelle clé) ? On peut scanner son QR d'abord, puis taper le code.
     // L'écran du code n'est JAMAIS caché : c'est la fenêtre du scan qui passe au-dessus de lui, le temps du scan.
     // Scan réussi, annulé ou en erreur : l'écran du code reste là tant que le bon code n'est pas tapé.
-    const rescan = h('button', { class: 'btn ghost', type: 'button', onclick: () => {
+    const rescan = h('button', { class: 'lock-rescan', type: 'button', onclick: () => {
       err.textContent = '';
       document.body.classList.add('sheet-over-lock');
       scanQR();
@@ -225,11 +237,16 @@ function unlock(pcSaysCode = false) {
         err.textContent = S.server ? 'Tape ton code pour ouvrir.' : ''; setTimeout(() => inp.focus(), 50);
       }, 300);
     } }, 'Scanner le QR du PC');
+    // 6 points qui se remplissent ; le vrai champ est posé dessus, invisible (le clavier chiffres s'ouvre au toucher)
+    const dots = h('div', { class: 'lock-dots', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map(() => h('span')));
+    const showDots = () => dots.querySelectorAll('span').forEach((d, i) => d.classList.toggle('on', i < inp.value.length));
     const box = h('div', { class: 'lock' },
-      h('span', { class: 'logo', style: 'width:56px;height:56px;border-radius:16px', html: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0E0F12" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 6v12M12 9v6M16 4v16M20 10v4"/></svg>' }),
-      h('h1', null, 'Kadans'),
-      h('p', { class: 'sub' }, 'Tape ton code d’accès à 6 chiffres'),
-      inp, err, go, rescan);
+      h('div', { class: 'lock-card' },
+        h('span', { class: 'logo lock-logo', html: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0E0F12" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 6v12M12 9v6M16 4v16M20 10v4"/></svg>' }),
+        h('h1', null, 'Bon retour'),
+        h('p', { class: 'sub' }, 'Entre ton code d’accès à 6 chiffres'),
+        h('div', { class: 'lock-pin' }, dots, inp), err, go),
+      rescan);
     const submit = async () => {
       const code = inp.value.replace(/\D/g, '');
       if (code.length !== 6) { err.textContent = '6 chiffres'; return; }
@@ -244,10 +261,10 @@ function unlock(pcSaysCode = false) {
         if (LOCK.keyRefused) toast('Ce QR n’est plus valable : sur le PC, onglet iPhone, scanne le nouveau QR.', 5000);
         return;
       }
-      err.textContent = res; inp.value = ''; go.disabled = false; inp.focus();
+      err.textContent = res; inp.value = ''; showDots(); go.disabled = false; inp.focus();
       box.classList.remove('shake'); void box.offsetWidth; box.classList.add('shake');
     };
-    inp.oninput = () => { inp.value = inp.value.replace(/\D/g, '').slice(0, 6); if (inp.value.length === 6) submit(); };
+    inp.oninput = () => { inp.value = inp.value.replace(/\D/g, '').slice(0, 6); showDots(); if (inp.value.length === 6) submit(); };
     inp.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
     go.onclick = submit;
     document.body.append(box);
@@ -869,38 +886,67 @@ function updatePill() {
 }
 
 // ------------------------------------------------------------------ vue : Ajouter
+// petits éléments communs aux pages Ajouter et Réglages (style « liste groupée »)
+function uiRow({ icon, tint, title, sub, right, onclick, danger, chevron }) {
+  const inner = [
+    icon ? h('span', { class: 'ui-ic', style: tint ? '--tint:' + tint : '', html: iconHTML(icon, 18) }) : null,
+    h('span', { class: 'ui-txt' }, h('span', { class: 'ui-t1' }, title), sub ? h('span', { class: 'ui-t2' }, sub) : null),
+    right != null ? (typeof right === 'string' ? h('span', { class: 'ui-val' }, right) : right) : null,
+    chevron ? h('span', { class: 'ui-chev', html: iconHTML('chev', 16) }) : null,
+  ];
+  return onclick
+    ? h('button', { class: 'ui-row' + (danger ? ' danger' : ''), type: 'button', onclick }, ...inner)
+    : h('div', { class: 'ui-row' + (danger ? ' danger' : '') }, ...inner);
+}
+function uiToggle(checked, onchange, label) {
+  const cb = h('input', { type: 'checkbox', role: 'switch', 'aria-label': label });
+  cb.checked = checked;
+  cb.onchange = () => onchange(cb.checked);
+  return h('label', { class: 'ui-switch' }, cb, h('span', { class: 'ui-knob' }));
+}
+function uiGroup(label, rows, note) {
+  return h('section', { class: 'ui-sec' },
+    label ? h('h2', { class: 'ui-h' }, label) : null,
+    h('div', { class: 'ui-group' }, rows.filter(Boolean)),
+    note ? h('p', { class: 'ui-note' }, note) : null);
+}
+const LOGO_SVG = (s, c = '#0E0F12') => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 6v12M12 9v6M16 4v16M20 10v4"/></svg>`;
+
 function viewAdd() {
-  const wrap = h('div');
-  wrap.append(h('div', { class: 'top' },
-    h('div', { class: 'brand' },
-      h('span', { class: 'logo', html: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0E0F12" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 6v12M12 9v6M16 4v16M20 10v4"/></svg>' }),
-      h('b', null, 'Kadans')),
+  const wrap = h('div', { class: 'pg' });
+  wrap.append(h('header', { class: 'pg-top' },
+    h('div', { class: 'brand' }, h('span', { class: 'logo', html: LOGO_SVG(16) }), h('b', null, 'Kadans')),
     statusPill()));
-  wrap.append(h('h1', null, 'Colle un lien,', h('br'), 'on s’occupe du reste.'),
-    h('p', { class: 'sub' }, 'YouTube → ta bibliothèque, dispo sans internet.'));
+  wrap.append(h('div', { class: 'pg-hero' },
+    h('h1', null, 'Ajouter de la musique'),
+    h('p', null, 'Colle un lien YouTube : ton PC le télécharge, l’analyse et le range.')));
 
   if (!S.server) {
-    wrap.append(h('div', { class: 'card', style: 'margin-top:22px' },
-      h('b', null, 'Relie d’abord ton PC'),
-      h('ol', { class: 'steps' },
-        h('li', null, 'Sur le PC, lance Kadans (double-clic sur « Kadans »).'),
-        h('li', null, 'Une page s’ouvre avec un QR code.'),
-        h('li', null, 'Touche le bouton ci-dessous et vise le QR code.')),
-      h('button', { class: 'btn primary', type: 'button', onclick: scanQR }, 'Scanner le QR du PC'),
-      h('button', { class: 'btn ghost', type: 'button', onclick: askLink }, ico('link', 18), 'J’ai un lien à coller')));
+    const step = (n, t1, t2) => h('li', null, h('span', { class: 'pg-num' }, String(n)), h('span', null, h('b', null, t1), h('span', null, t2)));
+    wrap.append(h('div', { class: 'pg-card pg-onboard' },
+      h('span', { class: 'pg-badge', html: iconHTML('pc', 22) }),
+      h('h2', null, 'Relie ton PC'),
+      h('p', { class: 'pg-muted' }, 'Kadans télécharge sur ton PC puis envoie la musique sur l’iPhone.'),
+      h('ol', { class: 'pg-steps' },
+        step(1, 'Lance Kadans sur le PC', 'Double-clic sur « Kadans ».'),
+        step(2, 'Un QR code s’affiche', 'Dans la fenêtre Kadans.'),
+        step(3, 'Scanne-le avec l’iPhone', 'Avec le bouton ci-dessous.')),
+      h('button', { class: 'pg-btn primary', type: 'button', onclick: scanQR }, ico('qr', 18), 'Scanner le QR du PC'),
+      h('button', { class: 'pg-btn text', type: 'button', onclick: askLink }, 'J’ai plutôt un lien à coller')));
   } else {
     if (S.online === false) {
-      wrap.append(h('div', { class: 'card', style: 'margin-top:22px;border-color:#4A2A2E' },
-        h('b', null, 'Ton PC ne répond pas'),
-        h('p', { class: 'sub', style: 'margin:0' }, 'Ta musique gardée sur l’iPhone reste disponible. Pour télécharger : allume le PC, lance Kadans, puis rescanne son QR code.'),
-        h('button', { class: 'btn', type: 'button', onclick: scanQR }, 'Scanner le QR du PC')));
+      wrap.append(h('div', { class: 'pg-alert' },
+        h('span', { class: 'pg-alert-ic', html: iconHTML('off', 18) }),
+        h('div', null, h('b', null, 'Ton PC ne répond pas'),
+          h('span', null, 'Ta musique sur l’iPhone reste disponible. Allume le PC et lance Kadans pour télécharger.')),
+        h('button', { class: 'pg-btn sm', type: 'button', onclick: scanQR }, 'Rescanner')));
     }
-    const input = h('input', { id: 'lien', class: 'input', type: 'url', inputmode: 'url', autocomplete: 'off',
+    const input = h('input', { id: 'lien', class: 'pg-input', type: 'url', inputmode: 'url', autocomplete: 'off',
       placeholder: 'https://youtube.com/watch?v=…', 'aria-label': 'Lien YouTube' });
-    const paste = h('button', { class: 'btn', type: 'button', onclick: async () => {
+    const paste = h('button', { class: 'pg-paste', type: 'button', onclick: async () => {
       try { input.value = (await navigator.clipboard.readText()).trim(); } catch (e) { input.focus(); toast('Appuie longuement dans le champ, puis « Coller ».'); }
-    } }, 'Coller');
-    const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Format' });
+    } }, ico('clip', 16), 'Coller');
+    const seg = h('div', { class: 'pg-seg', role: 'group', 'aria-label': 'Format' });
     [['mp3', 'MP3'], ['wav', 'WAV'], ['mp4', 'Clip vidéo']].forEach(([val, label]) => {
       seg.append(h('button', { type: 'button', 'aria-pressed': String(S.format === val), onclick: (e) => {
         S.format = val; localStorage.setItem('kadans.format', val);
@@ -908,21 +954,18 @@ function viewAdd() {
         e.currentTarget.setAttribute('aria-pressed', 'true');
       } }, label));
     });
-    const catChips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Catégorie', style: 'margin:0' });
+    const catChips = h('div', { class: 'pg-chips', role: 'group', 'aria-label': 'Catégorie' });
     const drawCatChips = () => {
       catChips.replaceChildren(...[['', 'Sans catégorie'], ...S.cats.map((c) => [c, c])].map(([val, label]) =>
-        h('button', { class: 'chip', type: 'button', 'aria-pressed': String(S.cat === val), onclick: () => {
+        h('button', { class: 'pg-chip', type: 'button', 'aria-pressed': String(S.cat === val), onclick: () => {
           S.cat = val; localStorage.setItem('kadans.cat', val); drawCatChips();
         } }, label)),
-      h('button', { class: 'chip accent', type: 'button', onclick: () => askCategory((nom) => {
+      h('button', { class: 'pg-chip add', type: 'button', onclick: () => askCategory((nom) => {
         S.cat = nom; localStorage.setItem('kadans.cat', nom); drawCatChips();
       }) }, '+ Nouvelle'));
     };
     drawCatChips();
-    const auto = h('input', { type: 'checkbox', id: 'auto' });
-    auto.checked = S.autoOffline;
-    auto.onchange = () => { S.autoOffline = auto.checked; localStorage.setItem('kadans.auto', auto.checked ? '1' : '0'); };
-    const go = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
+    const go = h('button', { class: 'pg-btn primary', type: 'button', onclick: async () => {
       const url = input.value.trim();
       if (!/^https?:\/\//.test(url)) { toast('Colle un lien qui commence par https://'); return; }
       go.disabled = true;
@@ -940,22 +983,27 @@ function viewAdd() {
         await refreshJobs();
       } catch (e) { toast(e.message); }
       go.disabled = false;
-    } }, ico('download', 20), 'Télécharger');
-    wrap.append(h('div', { class: 'card', style: 'margin-top:22px' },
-      h('label', { class: 'label', for: 'lien' }, 'Lien YouTube'),
-      h('div', { class: 'field' }, input, paste), seg,
-      h('span', { class: 'label' }, 'Ranger dans'), catChips,
-      h('label', { class: 'check', for: 'auto' }, auto, 'Garder sur l’iPhone automatiquement'),
+    } }, ico('download', 18), 'Télécharger');
+    wrap.append(h('div', { class: 'pg-card' },
+      h('label', { class: 'pg-label', for: 'lien' }, 'Lien YouTube'),
+      h('div', { class: 'pg-field' }, input, paste),
+      h('span', { class: 'pg-label' }, 'Format'), seg,
+      h('span', { class: 'pg-label' }, 'Ranger dans'), catChips,
+      h('div', { class: 'pg-inline' },
+        h('span', null, h('b', null, 'Garder sur l’iPhone'), h('span', null, 'Écoute sans internet dès que c’est prêt')),
+        uiToggle(S.autoOffline, (v) => { S.autoOffline = v; localStorage.setItem('kadans.auto', v ? '1' : '0'); }, 'Garder sur l’iPhone automatiquement')),
       go));
   }
-  wrap.append(h('button', { class: 'btn ghost', type: 'button', style: 'width:100%;margin-top:12px', onclick: importFiles }, ico('phone', 18), 'Importer depuis l’iPhone (Fichiers)'));
+  wrap.append(uiGroup(null, [
+    uiRow({ icon: 'phone', tint: '#7C9CFF', title: 'Importer depuis l’iPhone', sub: 'Fichiers audio de l’app Fichiers', onclick: importFiles, chevron: true }),
+  ]));
   wrap.append(h('div', { id: 'syncbar' }));
-  wrap.append(h('div', { class: 'section', id: 'jobs' }));
+  wrap.append(h('div', { class: 'pg-jobs', id: 'jobs' }));
   const recents = allTracks().slice(0, 5);
   if (recents.length) {
-    wrap.append(h('div', { class: 'section' },
-      h('div', { class: 'section-head' }, h('span', { class: 'label' }, 'Récents'),
-        h('button', { class: 'link', type: 'button', onclick: () => setTab('biblio') }, 'Tout voir')),
+    wrap.append(h('section', { class: 'ui-sec' },
+      h('div', { class: 'pg-sechead' }, h('h2', { class: 'ui-h' }, 'Récents'),
+        h('button', { class: 'pg-link', type: 'button', onclick: () => setTab('biblio') }, 'Tout voir')),
       h('div', { class: 'list-recents' }, recents.map((t) => trackRow(t, recents)))));
   }
   return wrap;
@@ -1945,10 +1993,10 @@ function bgSave(f) {
 }
 function bgCard() {
   const f = bgLoad();
-  const swatches = h('div', { class: 'swatches' }, BG_COLORS.map(([c, nom]) => h('button', { class: 'swatch', type: 'button', style: 'background:' + c,
+  const swatches = h('div', { class: 'pg-swatches' }, BG_COLORS.map(([c, nom]) => h('button', { class: 'pg-swatch', type: 'button', style: 'background:' + c,
     'aria-label': nom, 'aria-pressed': String(f.type === 'couleur' && (f.valeur || '').toLowerCase() === c.toLowerCase()),
     onclick: () => { bgSave({ type: 'couleur', valeur: c }); render(); } })));
-  const color = h('input', { type: 'color', value: f.type === 'couleur' ? f.valeur : BG_DEFAULT, 'aria-label': 'Autre couleur' });
+  const color = h('input', { type: 'color', class: 'pg-color', value: f.type === 'couleur' ? f.valeur : BG_DEFAULT, 'aria-label': 'Autre couleur' });
   color.onchange = () => { bgSave({ type: 'couleur', valeur: color.value }); render(); };
   const file = h('input', { type: 'file', accept: 'image/*', style: 'display:none' });
   file.onchange = () => {
@@ -1967,73 +2015,78 @@ function bgCard() {
   };
   let dim = null;
   if (f.type === 'image') {
-    const v = h('span', { style: 'min-width:44px;text-align:right' }, (f.assombrir ?? 45) + ' %');
-    const r = h('input', { type: 'range', min: 0, max: 85, value: f.assombrir ?? 45, style: 'flex:1', 'aria-label': 'Assombrir l’image' });
+    const v = h('span', { class: 'ui-val' }, (f.assombrir ?? 45) + ' %');
+    const r = h('input', { type: 'range', min: 0, max: 85, value: f.assombrir ?? 45, class: 'pg-range', 'aria-label': 'Assombrir l’image' });
     r.oninput = () => { const g = bgLoad(); g.assombrir = +r.value; v.textContent = g.assombrir + ' %'; bgSave(g); };
-    dim = h('label', { class: 'check', style: 'gap:10px' }, 'Assombrir', r, v);
+    dim = h('div', { class: 'ui-row' }, h('span', { class: 'ui-ic', style: '--tint:#A3A3AD', html: iconHTML('sun', 18) }),
+      h('span', { class: 'ui-txt', style: 'flex:none' }, h('span', { class: 'ui-t1' }, 'Assombrir')), r, v);
   }
-  return h('div', { class: 'card', style: 'margin-top:14px' },
-    h('span', { class: 'label' }, 'Fond d’écran'),
-    swatches,
-    h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center' },
-      h('label', { class: 'btn small', style: 'gap:8px' }, 'Autre couleur', color),
-      h('button', { class: 'btn small', type: 'button', onclick: () => file.click() }, 'Choisir une image…'),
-      h('button', { class: 'btn small ghost', type: 'button', onclick: () => {
-        localStorage.removeItem('kadans.fond'); document.documentElement.style.removeProperty('--bg'); bgApply(bgLoad()); render();
-      } }, 'Par défaut'),
+  return h('section', { class: 'ui-sec' },
+    h('h2', { class: 'ui-h' }, 'Apparence'),
+    h('div', { class: 'ui-group' },
+      h('div', { class: 'ui-block' }, h('span', { class: 'ui-t2' }, 'Fond d’écran'), swatches),
+      h('label', { class: 'ui-row' }, h('span', { class: 'ui-ic', style: '--tint:#C77DFF', html: iconHTML('palette', 18) }),
+        h('span', { class: 'ui-txt' }, h('span', { class: 'ui-t1' }, 'Autre couleur')), color),
+      uiRow({ icon: 'image', tint: '#5BD69A', title: 'Choisir une photo', sub: 'Depuis ta galerie', onclick: () => file.click(), chevron: true }),
+      dim,
+      f.type === 'image' || (f.valeur || '').toLowerCase() !== BG_DEFAULT.toLowerCase()
+        ? uiRow({ icon: 'refresh', tint: '#A3A3AD', title: 'Revenir au fond par défaut', onclick: () => {
+          localStorage.removeItem('kadans.fond'); document.documentElement.style.removeProperty('--bg'); bgApply(bgLoad()); render();
+        } }) : null,
       file),
-    dim,
-    h('p', { class: 'sub', style: 'margin:0' }, 'Une couleur, ou une photo de ton iPhone. Gardé sur cet iPhone.'));
+    h('p', { class: 'ui-note' }, 'Gardé sur cet iPhone uniquement.'));
 }
 bgApply(bgLoad());
 
 function viewSettings() {
-  const st = S.online === true ? 'Connecté' : S.online === false ? 'Injoignable (PC éteint ?)' : (S.server ? 'Connexion…' : 'Non relié');
-  const usage = h('span', null, '…');
-  if (navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then((e) => { usage.textContent = fmtSize(e.usage) + ' utilisés'; });
+  const on = S.online === true, off = S.online === false;
+  const st = on ? 'Connecté' : off ? 'Injoignable — PC éteint ?' : (S.server ? 'Connexion…' : 'Non relié');
+  const usage = h('span', { class: 'ui-val' }, '…');
+  if (navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then((e) => { usage.textContent = fmtSize(e.usage); });
   let total = 0; for (const m of S.offline.values()) total += m.taille || 0;
-  return h('div', null,
-    h('div', { class: 'top' }, h('h1', null, 'Réglages')),
-    h('div', { class: 'card' },
-      h('span', { class: 'label' }, 'Ton PC'),
-      h('div', { class: 'kv' }, h('span', null, 'État'), h('span', null, st)),
-      S.pcName ? h('div', { class: 'kv' }, h('span', null, 'Nom'), h('span', null, S.pcName)) : null,
-      h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' },
-        h('button', { class: 'btn small', type: 'button', onclick: async () => { await checkServer(); await refreshLibrary(); render(); toast(S.online ? 'PC connecté ✓' : 'PC injoignable'); } }, ico('refresh', 18), 'Vérifier'),
-        S.online ? h('button', { class: 'btn small', type: 'button', onclick: async () => { await api('/api/scanner', { method: 'POST' }); toast('Analyse des dossiers lancée sur le PC'); } }, ico('music', 18), 'Réanalyser les dossiers') : null,
-        h('button', { class: 'btn small', type: 'button', onclick: scanQR }, 'Scanner le QR du PC'),
-        h('button', { class: 'btn small ghost', type: 'button', onclick: askLink }, ico('link', 18), 'Coller un lien')),
-      h('p', { class: 'sub', style: 'margin:0' }, 'Après un redémarrage du PC, son adresse change : ouvre Kadans sur l’iPhone, puis « Scanner le QR du PC ». Ta musique déjà gardée sur l’iPhone est conservée.')),
-    h('div', { class: 'card', style: 'margin-top:14px' },
-      h('span', { class: 'label' }, 'Sur cet iPhone'),
-      (() => {
-        const cb = h('input', { type: 'checkbox', id: 'syncauto' });
-        cb.checked = S.syncAuto;
-        cb.onchange = () => { S.syncAuto = cb.checked; localStorage.setItem('kadans.syncAuto', cb.checked ? '1' : '0'); if (cb.checked) refreshSync(); };
-        return h('label', { class: 'check', for: 'syncauto' }, cb, 'Rapatrier automatiquement les morceaux cochés sur le PC');
-      })(),
-      (() => {
-        const cb = h('input', { type: 'checkbox', id: 'sendauto' });
-        cb.checked = S.sendAuto;
-        cb.onchange = () => { S.sendAuto = cb.checked; localStorage.setItem('kadans.sendAuto', cb.checked ? '1' : '0'); if (cb.checked) runUpload(); };
-        return h('label', { class: 'check', for: 'sendauto' }, cb, 'Envoyer automatiquement sur le PC mes mix et fichiers importés');
-      })(),
-      h('div', { class: 'kv' }, h('span', null, 'En attente d’envoi vers le PC'), h('span', null, String(phoneOnly().length))),
-      h('div', { class: 'kv' }, h('span', null, 'Morceaux gardés'), h('span', null, S.offline.size + ' (' + fmtSize(total) + ')')),
-      h('div', { class: 'kv' }, h('span', null, 'Espace'), usage),
-      h('button', { class: 'btn small danger', type: 'button', onclick: async () => {
+  const verify = h('button', { class: 'pg-btn sm', type: 'button', onclick: async () => {
+    verify.disabled = true;
+    await checkServer(); await refreshLibrary(); render(); toast(S.online ? 'PC connecté ✓' : 'PC injoignable');
+  } }, 'Vérifier');
+  return h('div', { class: 'pg' },
+    h('header', { class: 'pg-top' }, h('h1', { class: 'pg-title' }, 'Réglages')),
+    // --- carte d'état du PC
+    h('div', { class: 'pg-card pg-pc' },
+      h('span', { class: 'pg-badge' + (on ? ' ok' : off ? ' ko' : ''), html: iconHTML('pc', 22) }),
+      h('div', { class: 'pg-pc-txt' },
+        h('b', null, S.pcName || (S.server ? 'Ton PC' : 'Aucun PC relié')),
+        h('span', null, h('span', { class: 'dot' + (on ? ' ok' : off ? ' ko' : '') }), st)),
+      S.server ? verify : h('button', { class: 'pg-btn sm accent', type: 'button', onclick: scanQR }, 'Relier')),
+    uiGroup('Connexion', [
+      uiRow({ icon: 'qr', tint: '#FF7A45', title: 'Scanner le QR du PC', sub: 'Après un redémarrage du PC', onclick: scanQR, chevron: true }),
+      uiRow({ icon: 'link', tint: '#7C9CFF', title: 'Coller un lien', sub: 'Le lien affiché sous le QR', onclick: askLink, chevron: true }),
+      on ? uiRow({ icon: 'folder', tint: '#F5C451', title: 'Réanalyser les dossiers', sub: 'Cherche les nouveaux morceaux sur le PC',
+        onclick: async () => { await api('/api/scanner', { method: 'POST' }); toast('Analyse des dossiers lancée sur le PC'); }, chevron: true }) : null,
+    ], 'Ta musique gardée sur l’iPhone est conservée quand tu relies à nouveau le PC.'),
+    uiGroup('Synchronisation', [
+      uiRow({ icon: 'download', tint: '#5BD69A', title: 'Rapatrier automatiquement', sub: 'Les morceaux cochés sur le PC',
+        right: uiToggle(S.syncAuto, (v) => { S.syncAuto = v; localStorage.setItem('kadans.syncAuto', v ? '1' : '0'); if (v) refreshSync(); }, 'Rapatrier automatiquement les morceaux cochés sur le PC') }),
+      uiRow({ icon: 'up', tint: '#7C9CFF', title: 'Envoyer automatiquement', sub: 'Mes mix et fichiers importés',
+        right: uiToggle(S.sendAuto, (v) => { S.sendAuto = v; localStorage.setItem('kadans.sendAuto', v ? '1' : '0'); if (v) runUpload(); }, 'Envoyer automatiquement sur le PC mes mix et fichiers importés') }),
+      uiRow({ icon: 'clock', tint: '#A3A3AD', title: 'En attente d’envoi', right: String(phoneOnly().length) }),
+    ]),
+    uiGroup('Stockage', [
+      uiRow({ icon: 'music', tint: '#FF7A45', title: 'Morceaux sur l’iPhone', right: S.offline.size + ' · ' + fmtSize(total) }),
+      uiRow({ icon: 'disk', tint: '#A3A3AD', title: 'Espace utilisé par l’app', right: usage }),
+      S.offline.size ? uiRow({ icon: 'trash', title: 'Libérer l’espace', sub: 'Tout reste sur ton PC', danger: true, onclick: async () => {
         if (!confirm('Retirer TOUS les morceaux de l’iPhone ? (Ils restent sur ton PC.)')) return;
         await removeOffline([...S.offline.values()], true);
         render(); toast('Espace libéré (tout reste sur ton PC)');
-      } }, ico('trash', 18), 'Libérer l’espace')),
+      } }) : null,
+    ]),
     bgCard(),
-    h('div', { class: 'card', style: 'margin-top:14px' },
-      h('span', { class: 'label' }, 'Installer l’app'),
-      h('ol', { class: 'steps' },
-        h('li', null, 'Ouvre cette page dans Safari.'),
-        h('li', null, 'Touche Partager (carré avec une flèche).'),
-        h('li', null, 'Touche « Sur l’écran d’accueil », puis « Ajouter ».'))),
-    h('p', { class: 'sub', style: 'text-align:center;margin:20px 0 4px' }, 'Kadans 1.6 · usage personnel'));
+    uiGroup('Installer l’app', [
+      h('div', { class: 'ui-block' }, h('ol', { class: 'pg-steps small' },
+        h('li', null, h('span', { class: 'pg-num' }, '1'), h('span', null, 'Ouvre cette page dans ', h('b', null, 'Safari'))),
+        h('li', null, h('span', { class: 'pg-num' }, '2'), h('span', null, 'Touche ', h('b', null, 'Partager'), ' (carré avec une flèche)')),
+        h('li', null, h('span', { class: 'pg-num' }, '3'), h('span', null, h('b', null, 'Sur l’écran d’accueil'), ', puis Ajouter')))),
+    ]),
+    h('p', { class: 'pg-foot' }, h('span', { class: 'logo', html: LOGO_SVG(11) }), 'Kadans 1.6 · usage personnel'));
 }
 
 // ------------------------------------------------------------------ démarrage
