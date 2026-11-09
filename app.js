@@ -1806,6 +1806,91 @@ async function updateAwake() {
   }
 }
 
+// ---- iPhone : iOS coupe la table de mixage dès que l'app est cachée, mais laisse jouer un lecteur simple.
+// En arrière-plan, le morceau audible passe donc sur un lecteur simple (sans crossfade ni effets, morceaux
+// enchaînés à la fin), et les platines reprennent au même endroit au retour dans l'app.
+const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const SILENCE = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==';
+const RELAY = {
+  el: null, active: false, failed: false, deck: null, track: null, ownUrl: null,
+  // à appeler pendant un geste de l'utilisateur : iOS n'autorise le lecteur qu'à cette condition
+  setup() {
+    if (!IOS || this.el) return;
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* ancien iOS */ }
+    const el = this.el = new Audio();
+    el.playsInline = true; el.preservesPitch = true; el.webkitPreservesPitch = true;
+    el.addEventListener('ended', () => this.onEnded());
+    el.src = SILENCE;
+    el.play().catch(() => {});
+  },
+  // préparé à l'avance : au moment de passer en arrière-plan, il ne reste plus qu'à lancer la lecture
+  arm(d) {
+    if (!this.el || this.active) return;
+    const src = d.el.currentSrc;
+    if (src && this.el.currentSrc !== src) { this.el.src = src; this.el.load(); }
+  },
+  session() {
+    if (!('mediaSession' in navigator)) return;
+    const t = this.track, au = MIX.auto;
+    navigator.mediaSession.metadata = new MediaMetadata({ title: t.titre, artist: t.artiste || 'Kadans', album: 'Kadans' });
+    navigator.mediaSession.setActionHandler('play', () => this.el.play());
+    navigator.mediaSession.setActionHandler('pause', () => this.el.pause());
+    navigator.mediaSession.setActionHandler('previoustrack', null);
+    navigator.mediaSession.setActionHandler('nexttrack', au ? () => this.onEnded() : null);
+  },
+  start() {
+    if (!this.el || this.active || !player.paused) return;
+    if (MIX.fadeFinish) MIX.fadeFinish();   // transition en cours : on la termine d'un coup
+    const d = MIX.audible();
+    if (!d || !d.el.currentSrc) return;
+    const el = this.el;
+    if (el.currentSrc !== d.el.currentSrc) el.src = d.el.currentSrc;
+    try { el.currentTime = d.el.currentTime; } catch (e) { /* début */ }
+    el.playbackRate = d.el.playbackRate;
+    this.active = true; this.failed = false; this.deck = d; this.track = d.track;
+    el.play().catch(() => { this.failed = true; });
+    MIX.pauseAll();
+    this.session();
+  },
+  async onEnded() {
+    if (!this.active) return;
+    const au = MIX.auto, next = au && au.list[au.i + 1];
+    if (!next) { this.el.pause(); if (au) MIX.autoStop(); return; }
+    au.i++; this.track = next;
+    try {
+      const url = await sourceFor(next);
+      if (!this.active) { if (url.startsWith('blob:')) URL.revokeObjectURL(url); return; }
+      if (this.ownUrl) URL.revokeObjectURL(this.ownUrl);
+      this.ownUrl = url.startsWith('blob:') ? url : null;
+      this.el.src = url; this.el.playbackRate = 1;
+      await this.el.play();
+      this.session();
+    } catch (e) { /* morceau illisible : la musique s'arrête, l'app reste dans un état propre */ }
+  },
+  async back() {
+    if (!this.active) return;
+    this.active = false;
+    const el = this.el, d = this.deck, t = this.track;
+    const resume = this.failed || !(el.paused || el.ended), pos = this.failed ? d.el.currentTime : el.currentTime;
+    el.pause(); this.failed = false;
+    if ('mediaSession' in navigator) {
+      for (const a of ['play', 'pause', 'previoustrack', 'nexttrack']) navigator.mediaSession.setActionHandler(a, null);
+      navigator.mediaSession.metadata = null;
+      if (S.current) mediaSession(S.current);
+    }
+    MIX.ensure();
+    if (d.track !== t) {   // le mix a avancé pendant l'absence : les platines se recalent
+      await MIX.load(d.letter, t);
+      if (this.active) return;
+      const au = MIX.auto;
+      if (au && au.list[au.i + 1]) MIX.load(d.letter === 'A' ? 'B' : 'A', au.list[au.i + 1]);
+    }
+    try { d.el.currentTime = pos; } catch (e) { /* début */ }
+    if (resume) d.el.play().catch(() => toast('Touche ▶ pour reprendre la platine ' + d.letter, 3000));
+  },
+};
+document.addEventListener('visibilitychange', () => { if (document.hidden) RELAY.start(); else RELAY.back(); });
+
 // ---- niveau sonore égal : tous les morceaux joués à la même sonie (fichiers jamais modifiés)
 // Le PC mesure chaque morceau (EBU R128, en LUFS). Sinon, estimation sur l'audio déjà décodé.
 const LEVEL_TARGET = -14;   // LUFS, comme les plateformes de streaming
@@ -1890,15 +1975,21 @@ const MIX = {
         d.lvlG.connect(d.gain).connect(this.master);
         d.node.connect(d.an);
         d.pflG = this.ctx.createGain(); d.lvlG.connect(d.pflG).connect(this.cueBus);
-        d.el.addEventListener('playing', () => this.checkStream(d));
+        d.el.addEventListener('playing', () => { this.checkStream(d); RELAY.arm(d); });
         d.el.addEventListener('error', () => this.onError(d));
         d.el.addEventListener('play', () => this.updateButtons());
         ['play', 'pause', 'ended'].forEach((ev) => d.el.addEventListener(ev, () => updateAwake()));
         d.el.addEventListener('pause', () => this.updateButtons());
       }
       this.applyXf(); this.applyCue();
+      RELAY.setup();
     }
-    if (this.ctx.state === 'suspended') this.ctx.resume();
+    if (this.ctx.state === 'suspended' || this.ctx.state === 'interrupted') this.ctx.resume();   // interrupted : iPhone, retour d'arrière-plan
+  },
+  // la platine qu'on entend vraiment (la plus forte au crossfader si les deux jouent)
+  audible() {
+    const on = Object.values(this.decks).filter((d) => d.el && !d.el.paused && this.vol(d.letter) > 0);
+    return on.sort((a, b) => this.vol(b.letter) - this.vol(a.letter))[0] || null;
   },
   hpMix: 0.3,   // 0 = pré-écoute seule, 1 = mix seul
   applyCue() {
@@ -2193,7 +2284,7 @@ const MIX = {
     plRefresh();
   },
   autoTick() {
-    const au = this.auto; if (!au || au.fading) return;
+    const au = this.auto; if (!au || au.fading || RELAY.active) return;
     const cur = this.decks[au.cur], next = au.list[au.i + 1];
     const dur = cur.el.duration || 0, t = cur.el.currentTime;
     if (!next) { if (cur.el.ended || (dur && t >= dur - 0.3)) { this.autoStop(); toast('Fin de la playlist', 2500); } return; }
@@ -2221,20 +2312,22 @@ const MIX = {
     if (this.auto !== au) return;
     try { nxt.el.currentTime = nxt.points ? nxt.points.intro : 0; } catch (e) { /* début */ }
     await nxt.el.play().catch(() => {});
+    if (RELAY.active) { nxt.el.pause(); au.fading = false; return; }   // app cachée entre-temps : la transition se refera au retour
     if (!cur.el.paused) this.autoMatch(nl);
     const beat = cur.track && cur.track.bpm ? 60 / (cur.track.bpm * this.rate(cur)) : 0.5;
     const left = Math.max(1, (cur.el.duration || 0) - cur.el.currentTime - 0.3);
     const dur = Math.max(3, Math.min(au.beats * beat, left, 30)) * 1000;
     const from = this.xf, to = nl === 'B' ? 1 : 0, t0 = performance.now();
     clearInterval(this.autoTimer);
-    this.autoTimer = setInterval(() => {
-      if (this.auto !== au) { clearInterval(this.autoTimer); return; }
-      const k = Math.min(1, (performance.now() - t0) / dur);
+    const step = (k) => {
       au.fade = k;
       this.xf = from + (to - from) * k; this.applyXf();
       if (this.ui.xf && this.ui.xf.isConnected) this.ui.xf.value = Math.round(this.xf * 100);
-      if (k < 1) return;
+    };
+    this.fadeFinish = () => {
+      this.fadeFinish = null;
       clearInterval(this.autoTimer);
+      step(1);
       cur.el.pause();
       this.tempoHome(nxt);
       au.i++; au.cur = nl; au.fading = false; au.fade = 0;
@@ -2242,6 +2335,11 @@ const MIX = {
       const after = au.list[au.i + 1];
       if (after) this.load(cur.letter, after);
       plRefresh();
+    };
+    this.autoTimer = setInterval(() => {
+      if (this.auto !== au) { clearInterval(this.autoTimer); return; }
+      const k = Math.min(1, (performance.now() - t0) / dur);
+      if (k < 1) step(k); else this.fadeFinish();
     }, 50);
     plRefresh();
   },
@@ -2249,6 +2347,7 @@ const MIX = {
     const was = this.auto;
     if (was) clearInterval(was.timer);
     clearInterval(this.autoTimer);
+    this.fadeFinish = null;
     this.auto = null;
     if (was && !quiet) plRefresh();
   },
@@ -2262,11 +2361,18 @@ const MIX = {
     to.el.play();
     const start = this.xf, end = to === B ? 1 : 0, t0 = performance.now(), dur = 12000;
     clearInterval(this.autoTimer);
-    this.autoTimer = setInterval(() => {
-      const k = Math.min(1, (performance.now() - t0) / dur);
+    const step = (k) => {
       this.xf = start + (end - start) * k; this.applyXf();
       if (this.ui.xf) this.ui.xf.value = Math.round(this.xf * 100);
-      if (k >= 1) { clearInterval(this.autoTimer); from.el.pause(); this.tempoHome(to); }
+    };
+    this.fadeFinish = () => {
+      this.fadeFinish = null;
+      clearInterval(this.autoTimer);
+      step(1); from.el.pause(); this.tempoHome(to);
+    };
+    this.autoTimer = setInterval(() => {
+      const k = Math.min(1, (performance.now() - t0) / dur);
+      if (k < 1) step(k); else this.fadeFinish();
     }, 50);
     toast('Auto-mix : transition sur 12 secondes, puis retour au tempo normal', 2200);
   },
