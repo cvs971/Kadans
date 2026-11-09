@@ -1893,7 +1893,7 @@ const RELAY = {
     const el = this.el, d = this.deck, t = this.track;
     const resume = this.failed || !!this.why || !(el.paused || el.ended), pos = this.failed ? d.el.currentTime : el.currentTime;
     el.pause(); el.muted = true; this.failed = false; this.armed = null;
-    if (this.why) toast('Arrière-plan (v57) : ' + this.why, 8000);
+    if (this.why) toast('Arrière-plan (v58) : ' + this.why, 8000);
     if ('mediaSession' in navigator) {
       for (const a of ['play', 'pause', 'previoustrack', 'nexttrack']) navigator.mediaSession.setActionHandler(a, null);
       navigator.mediaSession.metadata = null;
@@ -2298,9 +2298,10 @@ const MIX = {
     if (cur.el.ended || (dur && t >= start)) this.autoFade();
   },
   // Transition sans à-coups : sur iPhone chaque changement de vitesse coupe le son un instant. Le morceau
-  // qui entre reste donc à sa vitesse normale, calé AVANT de démarrer ; seul le morceau qui sort s'adapte,
-  // une seule fois. Tempos trop éloignés : on n'essaie pas de les rattraper, simple fondu court.
+  // qui entre reste donc à sa vitesse normale, calé AVANT de démarrer ; ailleurs, le morceau qui sort s'adapte
+  // une seule fois, et sur iPhone aucun morceau ne change de vitesse. Tempos trop éloignés : simple fondu court.
   MATCH_MAX: 6,   // % de vitesse au-delà duquel on ne cale plus
+  MATCH_MAX_IOS: 2,   // iPhone, sans changement de vitesse : au-delà, les temps se décalent trop pour un fondu long
   fadeMatch(from, to) {
     if (to.el.paused && to.tempo) { to.tempo = 0; this.applyRate(to, true); if (to.setTempoUI) to.setTempoUI(); }
     if (from.el.paused || !from.track || !to.track || !from.track.bpm || !to.track.bpm) return false;
@@ -2314,6 +2315,7 @@ const MIX = {
       if (diff > 0.5) diff -= 1; if (diff < -0.5) diff += 1;
       try { to.el.currentTime = Math.max(0, to.el.currentTime + diff * bd); } catch (e) { /* début */ }
     }
+    if (IOS) return Math.abs(pct) <= this.MATCH_MAX_IOS;
     from.tempo = Math.round(pct * 10) / 10;
     this.applyRate(from, true); if (from.setTempoUI) from.setTempoUI();
     return true;
