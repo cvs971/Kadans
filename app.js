@@ -162,6 +162,8 @@ function parseLink(text) {
 // Le Wi-Fi demande d'avoir installé une fois le certificat Kadans sur le téléphone (onglet Mobile du PC).
 const WIFI = { base: null, tried: 0, info: (() => { try { return JSON.parse(localStorage.getItem('kadans.wifi') || 'null'); } catch (e) { return null; } })() };
 const base = () => WIFI.base || S.server;
+// App Android (APK Kadans) : pont natif (certificat Wi-Fi reconnu par l'app, écran gardé allumé)
+const NATIVE = (() => { try { return window.KadansAndroid || null; } catch (e) { return null; } })();
 function setWifiInfo(info) {
   const k = JSON.stringify(info || null);
   if (k === JSON.stringify(WIFI.info)) return;
@@ -1778,6 +1780,7 @@ function drawLeds(g, r, state, beatHz) {
 const AWAKE = { lock: null, asking: false };
 async function updateAwake() {
   const playing = !player.paused || Object.values(MIX.decks).some((d) => d.el && !d.el.paused);
+  if (NATIVE) { try { NATIVE.keepAwake(!!(playing || SYNC.running)); } catch (e) { /* ancienne app */ } return; }   // app Android : écran gardé allumé
   if (playing && !AWAKE.lock && !AWAKE.asking && navigator.wakeLock && document.visibilityState === 'visible') {
     AWAKE.asking = true;
     try {
@@ -2723,6 +2726,24 @@ async function certFingerprint(bytes) {
   const d = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
   return [...d.slice(0, 8)].map((x) => x.toString(16).padStart(2, '0').toUpperCase()).join(':');
 }
+// App Android (APK) : le certificat est reconnu par l'app Kadans seulement (rien à installer dans les Paramètres,
+// aucun effet sur le reste de la tablette). Mêmes contrôles qu'au téléchargement : structure + empreinte à comparer.
+async function trustWifiCA() {
+  try {
+    const r = await fetch(S.server + '/api/wifi/certificat?format=crt', { cache: 'no-store' });
+    if (!r.ok) throw new Error('le PC a répondu ' + r.status);
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    if (!isKadansCA(bytes)) { toast('Ce certificat ne vient pas de Kadans : refusé. Relie à nouveau ton PC avec le QR affiché sur son écran.', 7000); return false; }
+    const fp = await certFingerprint(bytes);
+    if (!confirm('Empreinte du certificat :\n\n' + fp + '\n\nEst-elle identique à celle affichée sur ton PC (Kadans → onglet Mobile → Wi-Fi) ?\n\nSi elle est différente, touche Annuler.')) { toast('Activation annulée.'); return false; }
+    let b64 = ''; for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    if (!NATIVE.trustCA(btoa(b64))) throw new Error('refusé par l’app');
+    await new Promise((res) => setTimeout(res, 300));
+    await probeWifi(true);
+    toast(WIFI.base ? 'Wi-Fi direct actif ✓' : 'Certificat reconnu ✓ Le Wi-Fi direct marchera quand tu seras sur le Wi-Fi de la maison.', 6000);
+    return true;
+  } catch (e) { toast('Activation impossible : ' + e.message, 5000); return false; }
+}
 async function downloadWifiCert() {
   try {
     const r = await fetch(S.server + '/api/wifi/certificat?format=crt', { cache: 'no-store' });
@@ -2749,8 +2770,14 @@ function wifiHelp() {
   openSheet(() => h('div', { class: 'pg', style: 'gap:14px' },
     h('div', null, h('h2', { style: 'margin:0 0 4px;font-size:20px' }, 'Wi-Fi de la maison'),
       h('p', { class: 'pg-muted' }, WIFI.base ? 'Actif ✓ À la maison, la musique passe directement par le Wi-Fi.' : 'À la maison, la musique peut passer directement par le Wi-Fi : beaucoup plus rapide. À faire une seule fois :')),
-    /Android/i.test(navigator.userAgent)
-      // Android : le certificat se télécharge ici, puis s'installe depuis les Paramètres
+    NATIVE
+      // App Android : une seule touche, rien à installer dans les Paramètres
+      ? h('ol', { class: 'pg-steps small' },
+        step(1, ['Touche ', h('b', null, '« Activer le Wi-Fi direct »'), ' ci-dessous.']),
+        step(2, ['Compare l’empreinte affichée avec celle du PC (Kadans → onglet ', h('b', null, 'Mobile'), ' → Wi-Fi), puis ', h('b', null, 'OK'), '.']),
+        step(3, ['C’est tout : à la maison, la musique passera directement par le Wi-Fi.']))
+      : /Android/i.test(navigator.userAgent)
+      // Android (Chrome) : le certificat se télécharge ici, puis s'installe depuis les Paramètres
       ? h('ol', { class: 'pg-steps small' },
         step(1, ['Touche ', h('b', null, '« Télécharger le certificat »'), ' ci-dessous : le fichier ', h('b', null, 'Kadans-WiFi.crt'), ' va dans tes Téléchargements.']),
         step(2, ['Ouvre ', h('b', null, 'Paramètres'), ' et cherche ', h('b', null, '« certificat CA »'), ' (en général ', h('b', null, 'Sécurité → Chiffrement et identifiants → Installer un certificat → Certificat CA'),
@@ -2762,10 +2789,14 @@ function wifiHelp() {
         step(2, ['Dans les 8 minutes : ', h('b', null, 'Réglages → Général → VPN et gestion de l’appareil → Profil téléchargé'), ' → « Kadans - Wi-Fi de la maison » → ', h('b', null, 'Installer'), ' (« Non vérifié » est normal).']),
         step(3, ['Puis ', h('b', null, 'Réglages → Général → Informations → Réglages des certificats'), ' : active ', h('b', null, '« Kadans - Wi-Fi de la maison »'), '.']),
         step(4, ['Reviens dans Kadans, sur le Wi-Fi de la maison.'])),
-    /Android/i.test(navigator.userAgent) && S.server
+    NATIVE && S.server
+      ? h('button', { class: 'pg-btn primary', type: 'button', onclick: async (e) => { e.currentTarget.disabled = true; if (await trustWifiCA() && WIFI.base) { closeSheet(); render(); } else wifiHelp(); } }, ico('wifi', 18), 'Activer le Wi-Fi direct')
+      : /Android/i.test(navigator.userAgent) && S.server
       ? h('button', { class: 'pg-btn primary', type: 'button', onclick: downloadWifiCert }, ico('download', 18), 'Télécharger le certificat')
       : null,
-    h('p', { class: 'ui-note', style: 'margin:0' }, 'Ce certificat est fait pour les adresses du réseau de la maison. N’installe que celui de ton PC : son empreinte doit être identique à celle affichée sur le PC.'),
+    h('p', { class: 'ui-note', style: 'margin:0' }, NATIVE
+      ? 'Le certificat n’est reconnu que par l’app Kadans, et seulement pour les adresses du réseau de la maison : il ne change rien pour le reste de la tablette.' + (NATIVE.caFingerprint() ? ' Certificat reconnu : ' + NATIVE.caFingerprint() + '.' : '')
+      : 'Ce certificat est fait pour les adresses du réseau de la maison. N’installe que celui de ton PC : son empreinte doit être identique à celle affichée sur le PC.'),
     // diagnostic : ce que le téléphone a constaté au dernier essai
     !WIFI.base ? h('div', { class: 'pg-alert', style: 'background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.1)' },
       h('div', null, h('b', null, 'Diagnostic'),
@@ -2798,7 +2829,7 @@ function viewSettings() {
       S.server ? verify : h('button', { class: 'pg-btn sm accent', type: 'button', onclick: scanQR }, 'Relier')),
     uiGroup('Connexion', [
       uiRow({ icon: 'wifi', tint: WIFI.base ? '#5BD69A' : '#A3A3AD', title: 'Wi-Fi de la maison',
-        sub: WIFI.base ? 'Direct avec le PC : transferts rapides' : WIFI.info ? 'Inactif : certificat à installer, ou pas à la maison' : 'Disponible avec la nouvelle version de Kadans',
+        sub: WIFI.base ? 'Direct avec le PC : transferts rapides' : WIFI.info ? (NATIVE && !NATIVE.caFingerprint() ? 'Inactif : touche ici pour l’activer' : 'Inactif : certificat à installer, ou pas à la maison') : 'Disponible avec la nouvelle version de Kadans',
         right: WIFI.base ? 'Actif' : 'Internet', onclick: wifiHelp, chevron: true }),
       uiRow({ icon: 'qr', tint: '#FF7A45', title: 'Scanner le QR du PC', sub: 'Après un redémarrage du PC', onclick: scanQR, chevron: true }),
       uiRow({ icon: 'link', tint: '#7C9CFF', title: 'Coller un lien', sub: 'Le lien affiché sous le QR', onclick: askLink, chevron: true }),
