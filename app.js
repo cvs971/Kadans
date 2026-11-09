@@ -1806,13 +1806,14 @@ async function updateAwake() {
   }
 }
 
-// ---- iPhone : iOS coupe la table de mixage dès que l'app est cachée, mais laisse jouer un lecteur simple.
-// En arrière-plan, le morceau audible passe donc sur un lecteur simple (sans crossfade ni effets, morceaux
-// enchaînés à la fin), et les platines reprennent au même endroit au retour dans l'app.
+// ---- iPhone : iOS coupe la table de mixage dès que l'app est cachée, mais laisse jouer un lecteur simple
+// déjà en route (il refuse d'en démarrer un à ce moment-là). Un lecteur simple suit donc en muet la platine
+// audible ; en arrière-plan on lui rend le son (sans crossfade ni effets, morceaux enchaînés à la fin),
+// et les platines reprennent au même endroit au retour dans l'app.
 const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const SILENCE = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==';
 const RELAY = {
-  el: null, active: false, failed: false, deck: null, track: null, ownUrl: null,
+  el: null, active: false, failed: false, deck: null, armed: null, track: null, ownUrl: null, why: '', manual: false, t0: 0,
   // à appeler pendant un geste de l'utilisateur : iOS n'autorise le lecteur qu'à cette condition
   setup() {
     if (!IOS || this.el) return;
@@ -1820,21 +1821,39 @@ const RELAY = {
     const el = this.el = new Audio();
     el.playsInline = true; el.preservesPitch = true; el.webkitPreservesPitch = true;
     el.addEventListener('ended', () => this.onEnded());
+    el.addEventListener('pause', () => { if (this.active && !this.manual && !el.ended) this.note('lecteur interrompu'); });
+    el.addEventListener('error', () => { if (this.active) this.note('erreur ' + (el.error ? el.error.code : '?')); });
     el.src = SILENCE;
     el.play().catch(() => {});
   },
-  // préparé à l'avance : au moment de passer en arrière-plan, il ne reste plus qu'à lancer la lecture
-  arm(d) {
+  // pour comprendre une coupure : affiché au retour dans l'app
+  note(msg) { if (!this.why) this.why = msg + ' après ' + ((Date.now() - this.t0) / 1000).toFixed(1) + ' s'; },
+  // le lecteur muet accompagne la platine audible (ou celle qui arrive pendant une transition)
+  follow() {
     if (!this.el || this.active) return;
-    const src = d.el.currentSrc;
-    if (src && this.el.currentSrc !== src) { this.el.src = src; this.el.load(); }
+    const d = MIX.fadeTarget || MIX.audible();
+    if (!d || d.el.paused || !d.el.currentSrc) {
+      this.armed = null;
+      if (!this.el.paused) this.el.pause();
+      return;
+    }
+    if (d !== this.armed || this.el.paused || this.el.currentSrc !== d.el.currentSrc) this.arm(d);
+  },
+  arm(d) {
+    const el = this.el, src = d.el.currentSrc;
+    this.armed = d;
+    if (el.currentSrc !== src) el.src = src;
+    el.muted = true;
+    try { if (Math.abs(el.currentTime - d.el.currentTime) > 0.3) el.currentTime = d.el.currentTime; } catch (e) { /* pas encore prêt */ }
+    el.playbackRate = d.el.playbackRate;
+    if (el.paused) el.play().catch(() => {});
   },
   session() {
     if (!('mediaSession' in navigator)) return;
     const t = this.track, au = MIX.auto;
     navigator.mediaSession.metadata = new MediaMetadata({ title: t.titre, artist: t.artiste || 'Kadans', album: 'Kadans' });
     navigator.mediaSession.setActionHandler('play', () => this.el.play());
-    navigator.mediaSession.setActionHandler('pause', () => this.el.pause());
+    navigator.mediaSession.setActionHandler('pause', () => { this.manual = true; this.el.pause(); });
     navigator.mediaSession.setActionHandler('previoustrack', null);
     navigator.mediaSession.setActionHandler('nexttrack', au ? () => this.onEnded() : null);
   },
@@ -1845,10 +1864,11 @@ const RELAY = {
     if (!d || !d.el.currentSrc) return;
     const el = this.el;
     if (el.currentSrc !== d.el.currentSrc) el.src = d.el.currentSrc;
-    try { el.currentTime = d.el.currentTime; } catch (e) { /* début */ }
+    try { if (Math.abs(el.currentTime - d.el.currentTime) > 0.15) el.currentTime = d.el.currentTime; } catch (e) { /* début */ }
     el.playbackRate = d.el.playbackRate;
-    this.active = true; this.failed = false; this.deck = d; this.track = d.track;
-    el.play().catch(() => { this.failed = true; });
+    this.active = true; this.failed = false; this.manual = false; this.why = ''; this.t0 = Date.now(); this.deck = d; this.track = d.track;
+    el.muted = false;
+    if (el.paused || el.ended) el.play().catch((e) => { this.failed = true; this.note('démarrage refusé (' + (e.name || '?') + ')'); });
     MIX.pauseAll();
     this.session();
   },
@@ -1871,8 +1891,9 @@ const RELAY = {
     if (!this.active) return;
     this.active = false;
     const el = this.el, d = this.deck, t = this.track;
-    const resume = this.failed || !(el.paused || el.ended), pos = this.failed ? d.el.currentTime : el.currentTime;
-    el.pause(); this.failed = false;
+    const resume = this.failed || !!this.why || !(el.paused || el.ended), pos = this.failed ? d.el.currentTime : el.currentTime;
+    el.pause(); el.muted = true; this.failed = false; this.armed = null;
+    if (this.why) toast('Arrière-plan (v56) : ' + this.why, 8000);
     if ('mediaSession' in navigator) {
       for (const a of ['play', 'pause', 'previoustrack', 'nexttrack']) navigator.mediaSession.setActionHandler(a, null);
       navigator.mediaSession.metadata = null;
@@ -1975,11 +1996,11 @@ const MIX = {
         d.lvlG.connect(d.gain).connect(this.master);
         d.node.connect(d.an);
         d.pflG = this.ctx.createGain(); d.lvlG.connect(d.pflG).connect(this.cueBus);
-        d.el.addEventListener('playing', () => { this.checkStream(d); RELAY.arm(d); });
+        d.el.addEventListener('playing', () => { this.checkStream(d); RELAY.follow(); });
         d.el.addEventListener('error', () => this.onError(d));
         d.el.addEventListener('play', () => this.updateButtons());
         ['play', 'pause', 'ended'].forEach((ev) => d.el.addEventListener(ev, () => updateAwake()));
-        d.el.addEventListener('pause', () => this.updateButtons());
+        d.el.addEventListener('pause', () => { this.updateButtons(); RELAY.follow(); });
       }
       this.applyXf(); this.applyCue();
       RELAY.setup();
@@ -2040,6 +2061,7 @@ const MIX = {
       this.decks.B.gain.gain.value = Math.sin(x * Math.PI / 2);
     }
     this.showVol();
+    RELAY.follow();
   },
   // volume de chaque platine en % (selon le crossfader)
   vol(letter) { return Math.round(100 * (letter === 'A' ? Math.cos(this.xf * Math.PI / 2) : Math.sin(this.xf * Math.PI / 2))); },
@@ -2313,6 +2335,7 @@ const MIX = {
     try { nxt.el.currentTime = nxt.points ? nxt.points.intro : 0; } catch (e) { /* début */ }
     await nxt.el.play().catch(() => {});
     if (RELAY.active) { nxt.el.pause(); au.fading = false; return; }   // app cachée entre-temps : la transition se refera au retour
+    this.fadeTarget = nxt; RELAY.follow();
     if (!cur.el.paused) this.autoMatch(nl);
     const beat = cur.track && cur.track.bpm ? 60 / (cur.track.bpm * this.rate(cur)) : 0.5;
     const left = Math.max(1, (cur.el.duration || 0) - cur.el.currentTime - 0.3);
@@ -2325,7 +2348,7 @@ const MIX = {
       if (this.ui.xf && this.ui.xf.isConnected) this.ui.xf.value = Math.round(this.xf * 100);
     };
     this.fadeFinish = () => {
-      this.fadeFinish = null;
+      this.fadeFinish = null; this.fadeTarget = null;
       clearInterval(this.autoTimer);
       step(1);
       cur.el.pause();
@@ -2347,7 +2370,7 @@ const MIX = {
     const was = this.auto;
     if (was) clearInterval(was.timer);
     clearInterval(this.autoTimer);
-    this.fadeFinish = null;
+    this.fadeFinish = null; this.fadeTarget = null;
     this.auto = null;
     if (was && !quiet) plRefresh();
   },
@@ -2365,8 +2388,9 @@ const MIX = {
       this.xf = start + (end - start) * k; this.applyXf();
       if (this.ui.xf) this.ui.xf.value = Math.round(this.xf * 100);
     };
+    this.fadeTarget = to; RELAY.follow();
     this.fadeFinish = () => {
-      this.fadeFinish = null;
+      this.fadeFinish = null; this.fadeTarget = null;
       clearInterval(this.autoTimer);
       step(1); from.el.pause(); this.tempoHome(to);
     };
