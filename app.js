@@ -408,8 +408,9 @@ async function refreshLibrary() {
     if (!Array.isArray(lib)) throw new Error('réponse inattendue du PC');   // ex. page d'erreur du tunnel
     S.lib = lib.map(cleanTrack).filter(Boolean);
     S.online = true;
-    localStorage.setItem('kadans.lib', JSON.stringify(S.lib.slice(0, 3000)));
-    await refreshCats();
+    const keep = JSON.stringify(S.lib.slice(0, 3000));
+    if (keep !== S.libSaved) { S.libSaved = keep; localStorage.setItem('kadans.lib', keep); }
+    if (!S.catsAt || Date.now() - S.catsAt > 60000) { S.catsAt = Date.now(); await refreshCats(); }   // les dossiers changent rarement
   } catch (e) { /* liste pas reçue cette fois : on garde la précédente (checkServer décide si le PC est joignable) */ }
   updatePill();
 }
@@ -922,7 +923,7 @@ function coverEl(t, cls = '') {
   const el = h('span', { class: 'cover ' + cls, style: 'position:relative;background:' + colorFor(t.id) },
     (t.titre || '?').trim().charAt(0).toUpperCase());
   const add = (src) => {
-    const img = h('img', { src, alt: '', style: 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover' });
+    const img = h('img', { src, alt: '', loading: 'lazy', decoding: 'async', style: 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover' });
     img.onerror = () => { img.remove(); if (!LOCK.waiting) noCover.add(t.id); };   // ne plus la redemander au PC (sauf si le code est demandé)
     el.append(img);
   };
@@ -1416,11 +1417,22 @@ function renderList() {
     return;
   }
   const max = 400;
+  S.rowsSig = rowsSig(list);
   list.slice(0, max).forEach((t) => box.append(trackRow(t, list)));
   if (list.length > max) box.append(h('div', { class: 'empty' }, `+ ${list.length - max} autres : affine ta recherche.`));
 }
-function refreshTrackRows() {
+// empreinte de ce que montre la liste : si rien n'a changé, on ne la reconstruit pas (moins de travail, pas de pochettes redemandées)
+function rowsSig(list) {
+  return [S.offline.size, [...S.saving.keys()].join(), S.current && S.current.id, S.online, S.folder,
+    Object.values(MIX.decks).map((d) => d.track && d.track.id).join(),
+    list.length, list.slice(0, 400).map((t) => [t.id, t.titre, t.artiste, t.bpm, t.duree, t.categorie].join('\u0001')).join('\u0002')].join('|');
+}
+function refreshTrackRows(periodic) {
   if (DRAG.on) return;   // pas de redessin pendant qu'un morceau est en train d'être glissé
+  if (periodic && S.tab === 'biblio' && $('#list') && S.rowsSig === rowsSig(filteredTracks())) {
+    const c = $('#count'); if (c) c.textContent = `${allTracks().length} morceaux · ${S.offline.size} sur l’iPhone`;
+    return;
+  }
   try { refreshRows(); } catch (e) { render(); }   // render() affiche l'erreur au lieu d'un écran vide
 }
 function refreshRows() {
@@ -2884,13 +2896,15 @@ async function tick(force) {
   try {
     ticks++;
     const active = S.jobs.some((j) => !['termine', 'erreur'].includes(j.etat));
-    if (force || ticks % 6 === 0 || S.online !== true) {
+    // PC injoignable (loin de chez toi) : on réessaie toutes les 10 s, puis toutes les 30 s au bout d'une minute
+    const offEvery = S.online === false ? ((S.fails || 0) > 6 ? 12 : 4) : 1;
+    if (force || (S.online === false ? ticks % offEvery === 0 : ticks % 6 === 0 || S.online !== true)) {
       await checkServer();
       // pendant la synchro, on ne recharge pas toute la bibliothèque : la connexion sert aux morceaux
       if (S.online) { if (!SYNC.running || force) await refreshLibrary(); await refreshSync(); }
-      if (S.tab === 'biblio') refreshTrackRows();
+      if (S.tab === 'biblio') refreshTrackRows(true);
     }
-    if (active || force || ticks % 6 === 0) await refreshJobs();
+    if (S.online !== false && (active || force || ticks % 6 === 0)) await refreshJobs();
   } finally { ticking = false; }
 }
 
