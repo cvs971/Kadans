@@ -2656,43 +2656,67 @@ bgApply(bgLoad());
 
 // guide : installer le certificat Kadans pour le Wi-Fi direct
 // ---- certificat Wi-Fi (Android) : on ne propose d'installer QUE le vrai certificat Kadans, c'est-à-dire
-// une autorité limitée (de façon « critique ») aux adresses des réseaux privés. Un certificat sans cette
-// limite (faux lien Kadans, faux PC) pourrait servir à espionner la navigation : il est refusé.
-function derAt(b, i) {
+// une autorité dont la limite (extension « critique ») ne couvre que les adresses des réseaux privés ET le seul
+// nom kadans.invalid. Une limite sur les adresses seules laisserait libres les noms de sites (google.com…) :
+// un tel certificat, comme un certificat sans limite, pourrait servir à espionner la navigation. Refusé.
+// Lecture stricte du DER (longueurs exactes, pas d'octets en trop) en suivant la vraie structure du certificat.
+function derAt(b, i, limit) {
+  if (i + 2 > limit) throw new Error('court');
   let len = b[i + 1], o = i + 2;
-  if (len & 0x80) { const n = len & 0x7f; len = 0; for (let k = 0; k < n; k++) len = len * 256 + b[o + k]; o += n; }
+  if (len & 0x80) {
+    const n = len & 0x7f; if (n < 1 || n > 3 || o + n > limit) throw new Error('longueur');
+    len = 0; for (let k = 0; k < n; k++) len = len * 256 + b[o + k]; o += n;
+  }
+  if (o + len > limit) throw new Error('déborde');
   return { tag: b[i], start: o, end: o + len };
+}
+function derKids(b, node) {
+  const out = [];
+  for (let i = node.start; i < node.end;) { const k = derAt(b, i, node.end); out.push(k); i = k.end; }
+  return out;
 }
 function isKadansCA(b) {
   try {
-    const oid = [0x06, 0x03, 0x55, 0x1d, 0x1e];   // extension NameConstraints (2.5.29.30)
-    let at = -1;
-    for (let i = 0; i < b.length - oid.length && at < 0; i++) if (oid.every((v, k) => b[i + k] === v)) at = i;
-    if (at < 0) return false;
-    let p = at + oid.length;
-    if (b[p] !== 0x01 || b[p + 2] !== 0xff) return false;   // doit être « critique »
-    p += 3;
-    const os = derAt(b, p); if (os.tag !== 0x04) return false;
-    const nc = derAt(b, os.start); if (nc.tag !== 0x30) return false;
-    let q = nc.start, n = 0;
-    while (q < nc.end) {
-      const part = derAt(b, q);
-      if (part.tag === 0xa0) {   // adresses autorisées
-        for (let r = part.start; r < part.end;) {
-          const sub = derAt(b, r), base = derAt(b, sub.start), v = b.slice(base.start, base.end);
-          if (base.tag === 0x87 && v.length === 8) {   // IPv4 + masque : 10/8, 172.16/12, 192.168/16 seulement
-            const ok = (v[0] === 10 && v[4] === 255) || (v[0] === 172 && (v[1] & 0xf0) === 16 && v[4] === 255 && v[5] >= 0xf0)
-              || (v[0] === 192 && v[1] === 168 && v[4] === 255 && v[5] === 255);
-            if (!ok) return false;
-          } else if (base.tag === 0x87 && v.length === 32) { if (v[0] !== 0xfd || v[16] !== 0xff) return false; }   // fd00::/8
-          else if (base.tag === 0x82) { if (new TextDecoder().decode(v) !== 'kadans.invalid') return false; }
-          else return false;
-          n++; r = sub.end;
-        }
-      }
-      q = part.end;
+    if (!(b instanceof Uint8Array) || b[0] !== 0x30) return false;
+    const cert = derAt(b, 0, b.length); if (cert.end !== b.length) return false;   // rien après le certificat
+    const top = derKids(b, cert); if (top.length !== 3 || top[0].tag !== 0x30) return false;
+    const tbs = derKids(b, top[0]).filter((x) => x.tag === 0xa3);
+    if (tbs.length !== 1) return false;
+    const extSeq = derKids(b, tbs[0]); if (extSeq.length !== 1 || extSeq[0].tag !== 0x30) return false;
+    const exts = {};
+    for (const e of derKids(b, extSeq[0])) {
+      if (e.tag !== 0x30) return false;
+      const k = derKids(b, e); if (k.length < 2 || k.length > 3 || k[0].tag !== 0x06) return false;
+      const id = [...b.slice(k[0].start, k[0].end)].join('.');
+      if (exts[id]) return false;   // extension en double : refus
+      let crit = false;
+      if (k.length === 3) { if (k[1].tag !== 0x01 || k[1].end - k[1].start !== 1) return false; crit = b[k[1].start] === 0xff; }
+      const val = k[k.length - 1]; if (val.tag !== 0x04) return false;
+      exts[id] = { crit, val };
     }
-    return n > 0;
+    // autorité (BasicConstraints ca=true)
+    const bc = exts['85.29.19']; if (!bc) return false;
+    const bcs = derAt(b, bc.val.start, bc.val.end); if (bcs.tag !== 0x30 || bcs.end !== bc.val.end) return false;
+    const bck = derKids(b, bcs); if (!bck.length || bck[0].tag !== 0x01 || b[bck[0].start] !== 0xff) return false;
+    // limite (NameConstraints), obligatoirement critique
+    const nc = exts['85.29.30']; if (!nc || !nc.crit) return false;
+    const ncs = derAt(b, nc.val.start, nc.val.end); if (ncs.tag !== 0x30 || ncs.end !== nc.val.end) return false;
+    const permitted = derKids(b, ncs).filter((x) => x.tag === 0xa0);
+    if (permitted.length !== 1) return false;
+    let ip = 0, dns = 0;
+    for (const sub of derKids(b, permitted[0])) {
+      if (sub.tag !== 0x30) return false;
+      const base = derKids(b, sub)[0]; if (!base) return false;
+      const v = b.slice(base.start, base.end);
+      if (base.tag === 0x87 && v.length === 8) {   // IPv4 + masque : 10/8, 172.16/12, 192.168/16 (ou plus étroit)
+        const ok = (v[0] === 10 && v[4] === 255) || (v[0] === 172 && (v[1] & 0xf0) === 16 && v[4] === 255 && v[5] >= 0xf0)
+          || (v[0] === 192 && v[1] === 168 && v[4] === 255 && v[5] === 255);
+        if (!ok) return false; ip++;
+      } else if (base.tag === 0x87 && v.length === 32) { if (v[0] !== 0xfd || v[16] !== 0xff) return false; ip++; }   // fd00::/8
+      else if (base.tag === 0x82) { if (new TextDecoder().decode(v) !== 'kadans.invalid') return false; dns++; }
+      else return false;   // toute autre forme de nom : refus
+    }
+    return ip > 0 && dns > 0;   // les adresses ET les noms doivent être limités
   } catch (e) { return false; }
 }
 async function certFingerprint(bytes) {
@@ -2709,7 +2733,7 @@ async function downloadWifiCert() {
     const url = URL.createObjectURL(new Blob([bytes], { type: 'application/x-x509-ca-cert' }));
     const a = h('a', { href: url, download: 'Kadans-WiFi.crt' }); document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
-    toast('Certificat Kadans vérifié ✓ Empreinte ' + fp + ' (la même que sur le PC, onglet Mobile). Installe-le depuis les Paramètres.', 9000);
+    toast('Certificat limité au réseau de la maison. Avant de l’installer, compare son empreinte ' + fp + ' avec celle affichée sur ton PC (onglet Mobile) : elles doivent être identiques.', 12000);
   } catch (e) { toast('Téléchargement impossible : ' + e.message, 5000); }
 }
 
