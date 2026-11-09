@@ -2730,10 +2730,12 @@ async function downloadWifiCert() {
     const bytes = new Uint8Array(await r.arrayBuffer());
     if (!isKadansCA(bytes)) { toast('Ce certificat ne vient pas de Kadans : installation refusée. Relie à nouveau ton PC avec le QR affiché sur son écran.', 7000); return; }
     const fp = await certFingerprint(bytes);
+    // l'empreinte comparée avec l'écran du PC est la vraie preuve que le certificat vient de TON PC
+    if (!confirm('Empreinte du certificat :\n\n' + fp + '\n\nEst-elle identique à celle affichée sur ton PC (Kadans → onglet Mobile → Wi-Fi) ?\n\nSi elle est différente, touche Annuler et n’installe rien.')) { toast('Téléchargement annulé.'); return; }
     const url = URL.createObjectURL(new Blob([bytes], { type: 'application/x-x509-ca-cert' }));
     const a = h('a', { href: url, download: 'Kadans-WiFi.crt' }); document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
-    toast('Certificat limité au réseau de la maison. Avant de l’installer, compare son empreinte ' + fp + ' avec celle affichée sur ton PC (onglet Mobile) : elles doivent être identiques.', 12000);
+    toast('Certificat téléchargé ✓ Installe-le maintenant depuis les Paramètres (« certificat CA »).', 8000);
   } catch (e) { toast('Téléchargement impossible : ' + e.message, 5000); }
 }
 
@@ -2763,7 +2765,7 @@ function wifiHelp() {
     /Android/i.test(navigator.userAgent) && S.server
       ? h('button', { class: 'pg-btn primary', type: 'button', onclick: downloadWifiCert }, ico('download', 18), 'Télécharger le certificat')
       : null,
-    h('p', { class: 'ui-note', style: 'margin:0' }, 'Ce certificat ne marche que pour les adresses du réseau de la maison : il ne sert pour aucun site Internet.'),
+    h('p', { class: 'ui-note', style: 'margin:0' }, 'Ce certificat est fait pour les adresses du réseau de la maison. N’installe que celui de ton PC : son empreinte doit être identique à celle affichée sur le PC.'),
     // diagnostic : ce que le téléphone a constaté au dernier essai
     !WIFI.base ? h('div', { class: 'pg-alert', style: 'background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.1)' },
       h('div', null, h('b', null, 'Diagnostic'),
