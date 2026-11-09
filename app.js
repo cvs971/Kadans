@@ -2665,18 +2665,29 @@ function wifiHelp() {
   openSheet(() => h('div', { class: 'pg', style: 'gap:14px' },
     h('div', null, h('h2', { style: 'margin:0 0 4px;font-size:20px' }, 'Wi-Fi de la maison'),
       h('p', { class: 'pg-muted' }, WIFI.base ? 'Actif ✓ À la maison, la musique passe directement par le Wi-Fi.' : 'À la maison, la musique peut passer directement par le Wi-Fi : beaucoup plus rapide. À faire une seule fois :')),
-    h('ol', { class: 'pg-steps small' },
-      step(1, ['Sur le PC, onglet ', h('b', null, 'Mobile'), ' : scanne le QR ', h('b', null, '« Certificat Wi-Fi »'), ' avec l’appareil photo (ouverture dans ', h('b', null, 'Safari'), '), puis ', h('b', null, 'Autoriser'), '.']),
-      step(2, ['Dans les 8 minutes : ', h('b', null, 'Réglages → Général → VPN et gestion de l’appareil → Profil téléchargé'), ' → « Kadans - Wi-Fi de la maison » → ', h('b', null, 'Installer'), ' (« Non vérifié » est normal).']),
-      step(3, ['Puis ', h('b', null, 'Réglages → Général → Informations → Réglages des certificats'), ' : active ', h('b', null, '« Kadans - Wi-Fi de la maison »'), '.']),
-      step(4, ['Reviens dans Kadans, sur le Wi-Fi de la maison.'])),
+    /Android/i.test(navigator.userAgent)
+      // Android : le certificat se télécharge ici, puis s'installe depuis les Paramètres
+      ? h('ol', { class: 'pg-steps small' },
+        step(1, ['Touche ', h('b', null, '« Télécharger le certificat »'), ' ci-dessous : le fichier ', h('b', null, 'Kadans-WiFi.crt'), ' va dans tes Téléchargements.']),
+        step(2, ['Ouvre ', h('b', null, 'Paramètres'), ' et cherche ', h('b', null, '« certificat CA »'), ' (en général ', h('b', null, 'Sécurité → Chiffrement et identifiants → Installer un certificat → Certificat CA'),
+          ' ; sur Samsung : ', h('b', null, 'Sécurité et confidentialité → Autres paramètres de sécurité → Installer depuis la mémoire'), ').']),
+        step(3, ['Touche ', h('b', null, 'Installer quand même'), ', déverrouille le téléphone, puis choisis ', h('b', null, 'Kadans-WiFi.crt'), '.']),
+        step(4, ['Reviens dans Kadans (ouvert avec ', h('b', null, 'Chrome'), '), sur le Wi-Fi de la maison, puis « Vérifier maintenant ».']))
+      : h('ol', { class: 'pg-steps small' },
+        step(1, ['Sur le PC, onglet ', h('b', null, 'Mobile'), ' : scanne le QR ', h('b', null, '« Certificat Wi-Fi »'), ' avec l’appareil photo (ouverture dans ', h('b', null, 'Safari'), '), puis ', h('b', null, 'Autoriser'), '.']),
+        step(2, ['Dans les 8 minutes : ', h('b', null, 'Réglages → Général → VPN et gestion de l’appareil → Profil téléchargé'), ' → « Kadans - Wi-Fi de la maison » → ', h('b', null, 'Installer'), ' (« Non vérifié » est normal).']),
+        step(3, ['Puis ', h('b', null, 'Réglages → Général → Informations → Réglages des certificats'), ' : active ', h('b', null, '« Kadans - Wi-Fi de la maison »'), '.']),
+        step(4, ['Reviens dans Kadans, sur le Wi-Fi de la maison.'])),
+    /Android/i.test(navigator.userAgent) && S.server
+      ? h('a', { class: 'pg-btn primary', href: S.server + '/api/wifi/certificat?format=crt', download: 'Kadans-WiFi.crt', target: '_blank', rel: 'noopener', style: 'text-decoration:none' }, ico('download', 18), 'Télécharger le certificat')
+      : null,
     h('p', { class: 'ui-note', style: 'margin:0' }, 'Ce certificat ne marche que pour les adresses du réseau de la maison : il ne sert pour aucun site Internet.'),
     // diagnostic : ce que le téléphone a constaté au dernier essai
     !WIFI.base ? h('div', { class: 'pg-alert', style: 'background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.1)' },
       h('div', null, h('b', null, 'Diagnostic'),
         h('span', null, !WIFI.info ? 'Le PC n’a pas encore indiqué son adresse Wi-Fi (Kadans 1.5 ou plus sur le PC, connexion mobile ouverte).'
           : 'Adresse du PC : ' + WIFI.info.ips.join(', ') + ' (port ' + WIFI.info.port + '). Dernier essai : ' + (WIFI.err || 'pas encore essayé') + '.'))) : null,
-    WIFI.info && !WIFI.base ? h('p', { class: 'ui-note', style: 'margin:0' }, 'Test dans Safari : ouvre ',
+    WIFI.info && !WIFI.base ? h('p', { class: 'ui-note', style: 'margin:0' }, 'Test dans le navigateur (Safari ou Chrome) : ouvre ',
       h('a', { href: 'https://' + WIFI.info.ips[0] + ':' + WIFI.info.port + '/api/etat', target: '_blank', rel: 'noopener', style: 'color:#FF8A57' }, 'https://' + WIFI.info.ips[0] + ':' + WIFI.info.port + '/api/etat'),
       '. « Clé d’accès manquante » = tout va bien ; « connexion non privée » = certificat à activer ; rien ne charge = pas sur le Wi-Fi de la maison.') : null,
     h('div', { style: 'display:flex;gap:8px;justify-content:flex-end' }, check)));
