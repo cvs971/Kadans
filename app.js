@@ -1893,7 +1893,7 @@ const RELAY = {
     const el = this.el, d = this.deck, t = this.track;
     const resume = this.failed || !!this.why || !(el.paused || el.ended), pos = this.failed ? d.el.currentTime : el.currentTime;
     el.pause(); el.muted = true; this.failed = false; this.armed = null;
-    if (this.why) toast('Arrière-plan (v56) : ' + this.why, 8000);
+    if (this.why) toast('Arrière-plan (v57) : ' + this.why, 8000);
     if ('mediaSession' in navigator) {
       for (const a of ['play', 'pause', 'previoustrack', 'nexttrack']) navigator.mediaSession.setActionHandler(a, null);
       navigator.mediaSession.metadata = null;
@@ -2085,21 +2085,6 @@ const MIX = {
       if (Math.abs(d.el.playbackRate - want) > 1e-4) d.el.playbackRate = want;
     } else d.rateT = setTimeout(() => this.applyRate(d, true), wait);
   },
-  // après l'auto-mix : retour doucement au tempo d'origine, par petits paliers (peu de changements = pas de saccades)
-  tempoHome(d) {
-    clearInterval(d.homeTimer);
-    const start = d.tempo;
-    if (Math.abs(start) < 0.05) return;
-    const steps = Math.max(2, Math.min(12, Math.round(Math.abs(start) / 0.4)));   // paliers de ~0,4 %
-    let n = 0;
-    d.homeTimer = setInterval(() => {
-      n++;
-      d.tempo = n >= steps ? 0 : Math.round(start * (1 - n / steps) * 10) / 10;
-      this.applyRate(d, true);
-      if (d.setTempoUI) d.setTempoUI();
-      if (n >= steps) clearInterval(d.homeTimer);
-    }, 1500);
-  },
   effBpm(d) { return d.track && d.track.bpm ? (d.track.bpm * this.rate(d)).toFixed(1).replace('.0', '') : '—'; },
   async load(letter, t) {
     this.ensure();
@@ -2265,7 +2250,6 @@ const MIX = {
     else { d.cue = d.el.currentTime; toast('Point CUE placé à ' + fmtTime(d.cue), 1200); }
   },
   sync(letter) {
-    clearInterval(this.decks[letter].homeTimer);   // SYNC à la main : plus de retour automatique
     const d = this.decks[letter], o = this.decks[letter === 'A' ? 'B' : 'A'];
     if (!d.track || !o.track || !d.track.bpm || !o.track.bpm) { toast('Les deux platines doivent avoir un BPM.'); return; }
     let target = (o.track.bpm * this.rate(o)) / d.track.bpm;
@@ -2290,7 +2274,7 @@ const MIX = {
     list = list.filter((t) => t && t.type !== 'video' && playable(t));
     if (!list.length) { toast('Aucun morceau jouable (PC injoignable ?).'); return; }
     this.ensure();
-    for (const d of Object.values(this.decks)) { d.el.pause(); clearInterval(d.homeTimer); d.tempo = 0; this.applyRate(d, true); if (d.setTempoUI) d.setTempoUI(); }
+    for (const d of Object.values(this.decks)) { d.el.pause(); d.tempo = 0; this.applyRate(d, true); if (d.setTempoUI) d.setTempoUI(); }
     player.pause();
     this.auto = { list, i: 0, cur: 'A', beats: beats || 16, fading: false, fade: 0 };
     plRefresh();
@@ -2313,18 +2297,26 @@ const MIX = {
     const start = cur.points ? cur.points.mixStart : (dur ? dur - 16 : Infinity);
     if (cur.el.ended || (dur && t >= start)) this.autoFade();
   },
-  // même tempo que le morceau en cours, calé sur le temps fort (sans changer d'écran)
-  autoMatch(nl) {
-    const d = this.decks[nl], o = this.decks[nl === 'A' ? 'B' : 'A'];
-    if (!d.track || !o.track || !d.track.bpm || !o.track.bpm) return;
-    let target = (o.track.bpm * this.rate(o)) / d.track.bpm;
+  // Transition sans à-coups : sur iPhone chaque changement de vitesse coupe le son un instant. Le morceau
+  // qui entre reste donc à sa vitesse normale, calé AVANT de démarrer ; seul le morceau qui sort s'adapte,
+  // une seule fois. Tempos trop éloignés : on n'essaie pas de les rattraper, simple fondu court.
+  MATCH_MAX: 6,   // % de vitesse au-delà duquel on ne cale plus
+  fadeMatch(from, to) {
+    if (to.el.paused && to.tempo) { to.tempo = 0; this.applyRate(to, true); if (to.setTempoUI) to.setTempoUI(); }
+    if (from.el.paused || !from.track || !to.track || !from.track.bpm || !to.track.bpm) return false;
+    let target = (to.track.bpm * this.rate(to)) / from.track.bpm;
     if (target > 1.5) target /= 2; else if (target < 0.67) target *= 2;
-    d.tempo = Math.round(Math.max(-16, Math.min(16, (target - 1) * 100)) * 10) / 10;
-    this.applyRate(d, true); if (d.setTempoUI) d.setTempoUI();
-    const bo = 60 / o.track.bpm, bd = 60 / d.track.bpm;
-    let diff = (o.el.currentTime % bo) / bo - (d.el.currentTime % bd) / bd;
-    if (diff > 0.5) diff -= 1; if (diff < -0.5) diff += 1;
-    try { d.el.currentTime = Math.max(0, d.el.currentTime + diff * bd); } catch (e) { /* rien */ }
+    const pct = (target - 1) * 100;
+    if (Math.abs(pct) > this.MATCH_MAX) return false;
+    if (to.el.paused) {
+      const bo = 60 / from.track.bpm, bd = 60 / to.track.bpm;
+      let diff = (from.el.currentTime % bo) / bo - (to.el.currentTime % bd) / bd;
+      if (diff > 0.5) diff -= 1; if (diff < -0.5) diff += 1;
+      try { to.el.currentTime = Math.max(0, to.el.currentTime + diff * bd); } catch (e) { /* début */ }
+    }
+    from.tempo = Math.round(pct * 10) / 10;
+    this.applyRate(from, true); if (from.setTempoUI) from.setTempoUI();
+    return true;
   },
   async autoFade() {
     const au = this.auto; if (!au || au.fading || !au.list[au.i + 1]) return;
@@ -2333,13 +2325,17 @@ const MIX = {
     if (!nxt.track || nxt.track.id !== want.id) await this.load(nl, want);
     if (this.auto !== au) return;
     try { nxt.el.currentTime = nxt.points ? nxt.points.intro : 0; } catch (e) { /* début */ }
+    const curTempo = cur.tempo, matched = this.fadeMatch(cur, nxt);
     await nxt.el.play().catch(() => {});
-    if (RELAY.active) { nxt.el.pause(); au.fading = false; return; }   // app cachée entre-temps : la transition se refera au retour
+    if (RELAY.active) {   // app cachée entre-temps : la transition se refera au retour
+      nxt.el.pause(); au.fading = false;
+      cur.tempo = curTempo; this.applyRate(cur, true); if (cur.setTempoUI) cur.setTempoUI();
+      return;
+    }
     this.fadeTarget = nxt; RELAY.follow();
-    if (!cur.el.paused) this.autoMatch(nl);
     const beat = cur.track && cur.track.bpm ? 60 / (cur.track.bpm * this.rate(cur)) : 0.5;
     const left = Math.max(1, (cur.el.duration || 0) - cur.el.currentTime - 0.3);
-    const dur = Math.max(3, Math.min(au.beats * beat, left, 30)) * 1000;
+    const dur = Math.max(3, Math.min(au.beats * beat, left, matched ? 30 : 6)) * 1000;
     const from = this.xf, to = nl === 'B' ? 1 : 0, t0 = performance.now();
     clearInterval(this.autoTimer);
     const step = (k) => {
@@ -2352,9 +2348,8 @@ const MIX = {
       clearInterval(this.autoTimer);
       step(1);
       cur.el.pause();
-      this.tempoHome(nxt);
       au.i++; au.cur = nl; au.fading = false; au.fade = 0;
-      clearInterval(cur.homeTimer); cur.tempo = 0; this.applyRate(cur, true); if (cur.setTempoUI) cur.setTempoUI();
+      cur.tempo = 0; this.applyRate(cur, true); if (cur.setTempoUI) cur.setTempoUI();
       const after = au.list[au.i + 1];
       if (after) this.load(cur.letter, after);
       plRefresh();
@@ -2380,9 +2375,9 @@ const MIX = {
     if (!from.track || !to.track) { toast('Charge un morceau sur chaque platine.'); return; }
     this.ensure();
     if (from.el.paused) { from.el.play(); }
-    if (from.track.bpm && to.track.bpm) this.sync(to.letter);
+    const fromTempo = from.tempo, matched = this.fadeMatch(from, to);
     to.el.play();
-    const start = this.xf, end = to === B ? 1 : 0, t0 = performance.now(), dur = 12000;
+    const start = this.xf, end = to === B ? 1 : 0, t0 = performance.now(), dur = matched ? 12000 : 6000;
     clearInterval(this.autoTimer);
     const step = (k) => {
       this.xf = start + (end - start) * k; this.applyXf();
@@ -2392,13 +2387,14 @@ const MIX = {
     this.fadeFinish = () => {
       this.fadeFinish = null; this.fadeTarget = null;
       clearInterval(this.autoTimer);
-      step(1); from.el.pause(); this.tempoHome(to);
+      step(1); from.el.pause();
+      from.tempo = fromTempo; this.applyRate(from, true); if (from.setTempoUI) from.setTempoUI();
     };
     this.autoTimer = setInterval(() => {
       const k = Math.min(1, (performance.now() - t0) / dur);
       if (k < 1) step(k); else this.fadeFinish();
     }, 50);
-    toast('Auto-mix : transition sur 12 secondes, puis retour au tempo normal', 2200);
+    toast(matched ? 'Auto-mix : transition sur 12 secondes' : 'Auto-mix : tempos trop éloignés, simple fondu de 6 secondes', 2200);
   },
   toggleRec() {
     this.ensure();
@@ -2465,7 +2461,6 @@ const MIX = {
       bpmEl.textContent = this.effBpm(d);
     };
     slider.oninput = () => {
-      clearInterval(d.homeTimer);   // la main reprend le tempo : plus de retour automatique
       d.tempo = +slider.value;
       this.applyRate(d);
       d.setTempoUI();
