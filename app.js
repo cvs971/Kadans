@@ -1813,7 +1813,7 @@ async function updateAwake() {
 const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const SILENCE = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==';
 const RELAY = {
-  el: null, active: false, failed: false, deck: null, armed: null, track: null, ownUrl: null, why: '', manual: false, t0: 0,
+  el: null, active: false, failed: false, deck: null, armed: null, track: null, ownUrl: null, why: '', manual: false, t0: 0, wantPos: null, wantAt: 0,
   // à appeler pendant un geste de l'utilisateur : iOS n'autorise le lecteur qu'à cette condition
   setup() {
     if (!IOS || this.el) return;
@@ -1823,8 +1823,31 @@ const RELAY = {
     el.addEventListener('ended', () => this.onEnded());
     el.addEventListener('pause', () => { if (this.active && !this.manual && !el.ended) this.note('lecteur interrompu'); });
     el.addEventListener('error', () => { if (this.active) this.note('erreur ' + (el.error ? el.error.code : '?')); });
+    for (const ev of ['loadedmetadata', 'canplay']) el.addEventListener(ev, () => this.applyWant());
     el.src = SILENCE;
     el.play().catch(() => {});
+    setInterval(() => this.tick(), 1500);
+  },
+  // iOS ignore un déplacement demandé avant que le morceau soit chargé : on le garde pour le faire dès que possible
+  seekTo(pos) {
+    const el = this.el;
+    if (el.readyState < 1) { this.wantPos = pos; this.wantAt = Date.now(); return; }
+    this.wantPos = null;
+    try { el.currentTime = pos; } catch (e) { /* début */ }
+  },
+  applyWant() {
+    if (this.wantPos == null || this.el.readyState < 1) return;
+    const pos = this.wantPos + (Date.now() - this.wantAt) / 1000 * this.el.playbackRate;
+    this.seekTo(pos);
+  },
+  // lecteur muet : réessaie s'il a été refusé, et reste calé sur la platine
+  tick() {
+    if (!this.el || this.active) return;
+    this.follow();
+    const d = this.armed, el = this.el;
+    if (!d || el.paused || el.readyState < 1) return;
+    if (Math.abs(el.currentTime - d.el.currentTime) > 0.25) this.seekTo(d.el.currentTime);
+    if (el.playbackRate !== d.el.playbackRate) el.playbackRate = d.el.playbackRate;
   },
   // pour comprendre une coupure : affiché au retour dans l'app
   note(msg) { if (!this.why) this.why = msg + ' après ' + ((Date.now() - this.t0) / 1000).toFixed(1) + ' s'; },
@@ -1837,14 +1860,14 @@ const RELAY = {
       if (!this.el.paused) this.el.pause();
       return;
     }
-    if (d !== this.armed || this.el.paused || this.el.currentSrc !== d.el.currentSrc) this.arm(d);
+    if (d !== this.armed || this.el.paused || this.el.src !== d.el.currentSrc) this.arm(d);
   },
   arm(d) {
     const el = this.el, src = d.el.currentSrc;
     this.armed = d;
-    if (el.currentSrc !== src) el.src = src;
+    if (el.src !== src) el.src = src;
     el.muted = true;
-    try { if (Math.abs(el.currentTime - d.el.currentTime) > 0.3) el.currentTime = d.el.currentTime; } catch (e) { /* pas encore prêt */ }
+    if (Math.abs(el.currentTime - d.el.currentTime) > 0.3) this.seekTo(d.el.currentTime);
     el.playbackRate = d.el.playbackRate;
     if (el.paused) el.play().catch(() => {});
   },
@@ -1863,8 +1886,8 @@ const RELAY = {
     const d = MIX.audible();
     if (!d || !d.el.currentSrc) return;
     const el = this.el;
-    if (el.currentSrc !== d.el.currentSrc) el.src = d.el.currentSrc;
-    try { if (Math.abs(el.currentTime - d.el.currentTime) > 0.15) el.currentTime = d.el.currentTime; } catch (e) { /* début */ }
+    if (el.src !== d.el.currentSrc) el.src = d.el.currentSrc;
+    if (Math.abs(el.currentTime - d.el.currentTime) > 0.4) this.seekTo(d.el.currentTime);
     el.playbackRate = d.el.playbackRate;
     this.active = true; this.failed = false; this.manual = false; this.why = ''; this.t0 = Date.now(); this.deck = d; this.track = d.track;
     el.muted = false;
@@ -1882,6 +1905,7 @@ const RELAY = {
       if (!this.active) { if (url.startsWith('blob:')) URL.revokeObjectURL(url); return; }
       if (this.ownUrl) URL.revokeObjectURL(this.ownUrl);
       this.ownUrl = url.startsWith('blob:') ? url : null;
+      this.wantPos = null;
       this.el.src = url; this.el.playbackRate = 1;
       await this.el.play();
       this.session();
@@ -1891,9 +1915,11 @@ const RELAY = {
     if (!this.active) return;
     this.active = false;
     const el = this.el, d = this.deck, t = this.track;
-    const resume = this.failed || !!this.why || !(el.paused || el.ended), pos = this.failed ? d.el.currentTime : el.currentTime;
-    el.pause(); el.muted = true; this.failed = false; this.armed = null;
-    if (this.why) toast('Arrière-plan (v58) : ' + this.why, 8000);
+    const resume = this.failed || !!this.why || !(el.paused || el.ended);
+    // même morceau : jamais de retour en arrière par rapport à l'endroit où la platine s'était arrêtée
+    const pos = this.failed ? d.el.currentTime : d.track === t ? Math.max(el.currentTime, d.el.currentTime) : el.currentTime;
+    el.pause(); el.muted = true; this.failed = false; this.armed = null; this.wantPos = null;
+    if (this.why) toast('Arrière-plan (v59) : ' + this.why, 8000);
     if ('mediaSession' in navigator) {
       for (const a of ['play', 'pause', 'previoustrack', 'nexttrack']) navigator.mediaSession.setActionHandler(a, null);
       navigator.mediaSession.metadata = null;
