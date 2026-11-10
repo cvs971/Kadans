@@ -1874,7 +1874,7 @@ async function updateAwake() {
 const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const SILENCE = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==';
 const RELAY = {
-  el: null, active: false, failed: false, deck: null, armed: null, track: null, ownUrl: null, why: '', manual: false, t0: 0, wantPos: null, wantAt: 0,
+  el: null, active: false, failed: false, deck: null, armed: null, track: null, ownUrl: null, why: '', manual: false, t0: 0, wantPos: null, tries: 0, returning: false, tapFn: null, log: [],
   // à appeler pendant un geste de l'utilisateur : iOS n'autorise le lecteur qu'à cette condition
   setup() {
     if (!IOS || this.el) return;
@@ -1884,22 +1884,28 @@ const RELAY = {
     el.addEventListener('ended', () => this.onEnded());
     el.addEventListener('pause', () => { if (this.active && !this.manual && !el.ended) this.note('lecteur interrompu'); });
     el.addEventListener('error', () => { if (this.active) this.note('erreur ' + (el.error ? el.error.code : '?')); });
-    for (const ev of ['loadedmetadata', 'canplay']) el.addEventListener(ev, () => this.applyWant());
+    for (const ev of ['loadedmetadata', 'canplay', 'playing', 'seeked', 'timeupdate']) el.addEventListener(ev, () => this.applyWant(ev));
+    for (const ev of ['playing', 'seeked', 'pause', 'waiting', 'ended', 'error']) el.addEventListener(ev, () => { if (this.active) this.trace(ev + ' à ' + el.currentTime.toFixed(1)); });
     el.src = SILENCE;
     el.play().catch(() => {});
     setInterval(() => this.tick(), 1500);
   },
-  // iOS ignore un déplacement demandé avant que le morceau soit chargé : on le garde pour le faire dès que possible
-  seekTo(pos) {
+  // iOS ignore parfois un déplacement, même morceau déjà annoncé comme chargé : on recommence jusqu'à le voir jouer au bon endroit
+  seekTo(pos) { this.wantPos = pos; this.tries = 0; this.applyWant(); },
+  applyWant(ev) {
     const el = this.el;
-    if (el.readyState < 1) { this.wantPos = pos; this.wantAt = Date.now(); return; }
-    this.wantPos = null;
-    try { el.currentTime = pos; } catch (e) { /* début */ }
+    if (this.wantPos == null || el.readyState < 1 || el.seeking) return;
+    const t = !this.active && this.armed ? this.armed.el.currentTime : this.wantPos;
+    if (Math.abs(el.currentTime - t) < 1) { if (ev === 'timeupdate' && !el.paused) this.wantPos = null; return; }
+    if (this.tries++ >= 12) { this.trace('déplacement abandonné, reste à ' + el.currentTime.toFixed(1)); this.wantPos = null; return; }
+    try { el.currentTime = t; } catch (e) { /* pas encore possible */ }
   },
-  applyWant() {
-    if (this.wantPos == null || this.el.readyState < 1) return;
-    const pos = this.wantPos + (Date.now() - this.wantAt) / 1000 * this.el.playbackRate;
-    this.seekTo(pos);
+  trace(msg) { if (this.log.length < 40) this.log.push(((Date.now() - this.t0) / 1000).toFixed(1) + ' s : ' + msg); },
+  // journal affiché au retour dans l'app, pour comprendre ce que fait iOS
+  showLog() {
+    const old = document.getElementById('relay-log'); if (old) old.remove();
+    document.body.append(h('div', { id: 'relay-log', style: 'position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top) + 8px);z-index:200;max-height:45vh;overflow:auto;padding:10px;border-radius:12px;background:#000;color:#fff;font:12px/1.35 monospace;white-space:pre-wrap;-webkit-user-select:text;user-select:text;border:1px solid #666', onclick: (e) => { if (e.target.tagName === 'BUTTON') e.currentTarget.remove(); } },
+      'Arrière-plan v61\n' + this.log.join('\n') + '\n', h('button', { type: 'button', style: 'margin-top:6px;padding:6px 12px' }, 'Fermer')));
   },
   // lecteur muet : réessaie s'il a été refusé, et reste calé sur la platine
   tick() {
@@ -1942,6 +1948,7 @@ const RELAY = {
     navigator.mediaSession.setActionHandler('nexttrack', au ? () => this.onEnded() : null);
   },
   start() {
+    if (this.active && this.returning) { this.cancelTap(); this.returning = false; return; }   // reparti sans avoir repris les platines : le secours continue
     if (!this.el || this.active || !player.paused) return;
     if (MIX.fadeFinish) MIX.fadeFinish();   // transition en cours : on la termine d'un coup
     const d = MIX.audible();
@@ -1950,7 +1957,9 @@ const RELAY = {
     if (el.src !== d.el.currentSrc) el.src = d.el.currentSrc;
     if (Math.abs(el.currentTime - d.el.currentTime) > 0.4) this.seekTo(d.el.currentTime);
     el.playbackRate = d.el.playbackRate;
-    this.active = true; this.failed = false; this.manual = false; this.why = ''; this.t0 = Date.now(); this.deck = d; this.track = d.track;
+    this.t0 = Date.now();
+    this.log = ['secours avant : ' + (el.paused ? 'arrêté' : 'joue') + ', chargé ' + el.readyState + ', à ' + el.currentTime.toFixed(1) + ', muet ' + el.muted + ' ; platine à ' + d.el.currentTime.toFixed(1) + ' ; moteur ' + MIX.ctx.state];
+    this.active = true; this.failed = false; this.manual = false; this.why = ''; this.deck = d; this.track = d.track;
     el.muted = false;
     if (el.paused || el.ended) el.play().catch((e) => { this.failed = true; this.note('démarrage refusé (' + (e.name || '?') + ')'); });
     MIX.pauseAll();
@@ -1972,29 +1981,67 @@ const RELAY = {
       this.session();
     } catch (e) { /* morceau illisible : la musique s'arrête, l'app reste dans un état propre */ }
   },
+  // Au retour, le secours continue de jouer tant que les platines n'ont pas vraiment repris :
+  // iOS peut exiger un toucher de l'écran pour relancer la table de mixage.
   async back() {
-    if (!this.active) return;
-    this.active = false;
+    if (!this.active || this.returning) return;
+    this.returning = true;
+    MIX.ensure();
+    this.trace('retour : secours ' + (this.el.paused ? 'arrêté' : 'joue') + ' à ' + this.el.currentTime.toFixed(1) + ' ; moteur ' + MIX.ctx.state);
+    if (await this.handBack() || !this.returning) return;
+    this.waitTap();
+  },
+  waitTap() {
+    this.trace('platines refusées : attente d’un toucher');
+    this.showLog();
+    toast('Touche l’écran pour reprendre les platines', 4000);
+    this.tapFn = () => {
+      this.tapFn = null;
+      MIX.ensure();
+      if (this.deck.track === this.track) this.deck.el.play().catch(() => {});
+      const stop = (e) => { e.stopPropagation(); e.preventDefault(); };   // ce toucher ne doit pas aussi actionner un bouton
+      document.addEventListener('click', stop, { capture: true, once: true });
+      setTimeout(() => document.removeEventListener('click', stop, { capture: true }), 500);
+      this.handBack().then((ok) => { if (!ok && this.returning) this.waitTap(); });
+    };
+    document.addEventListener('pointerdown', this.tapFn, { capture: true, once: true });
+  },
+  cancelTap() { if (this.tapFn) document.removeEventListener('pointerdown', this.tapFn, { capture: true }); this.tapFn = null; },
+  async handBack() {
     const el = this.el, d = this.deck, t = this.track;
     const resume = this.failed || !!this.why || !(el.paused || el.ended);
-    // même morceau : jamais de retour en arrière par rapport à l'endroit où la platine s'était arrêtée
-    const pos = this.failed ? d.el.currentTime : d.track === t ? Math.max(el.currentTime, d.el.currentTime) : el.currentTime;
+    if (d.track !== t) {   // le mix a avancé pendant l'absence : les platines se recalent
+      await MIX.load(d.letter, t);
+      if (!this.returning) return false;
+      const au = MIX.auto;
+      if (au && au.list[au.i + 1]) MIX.load(d.letter === 'A' ? 'B' : 'A', au.list[au.i + 1]);
+    }
+    // jamais de retour en arrière par rapport à l'endroit où la platine s'était arrêtée
+    const pos = this.failed ? d.el.currentTime : Math.max(el.currentTime, d.el.currentTime);
+    try { d.el.currentTime = pos; } catch (e) { /* début */ }
+    if (!resume) { this.finish(); return true; }
+    await Promise.race([MIX.ctx.resume().catch(() => {}), new Promise((r) => setTimeout(r, 700))]);
+    if (!this.returning) return false;
+    if (MIX.ctx.state !== 'running') { this.trace('moteur toujours ' + MIX.ctx.state); return false; }
+    try { await d.el.play(); } catch (e) { this.trace('platine refusée : ' + (e.name || '?')); return false; }
+    if (!this.returning) { d.el.pause(); return false; }
+    if (!this.failed && !el.paused && el.currentTime - d.el.currentTime > 0.3) { try { d.el.currentTime = el.currentTime; } catch (e) { /* tant pis */ } }
+    this.trace('platine reprise à ' + d.el.currentTime.toFixed(1));
+    this.finish();
+    return true;
+  },
+  finish() {
+    const el = this.el;
+    this.cancelTap();
+    this.active = false; this.returning = false;
     el.pause(); el.muted = true; this.failed = false; this.armed = null; this.wantPos = null;
-    if (this.why) toast('Arrière-plan (v60) : ' + this.why, 8000);
     if ('mediaSession' in navigator) {
       for (const a of ['play', 'pause', 'previoustrack', 'nexttrack']) navigator.mediaSession.setActionHandler(a, null);
       navigator.mediaSession.metadata = null;
       if (S.current) mediaSession(S.current);
     }
-    MIX.ensure();
-    if (d.track !== t) {   // le mix a avancé pendant l'absence : les platines se recalent
-      await MIX.load(d.letter, t);
-      if (this.active) return;
-      const au = MIX.auto;
-      if (au && au.list[au.i + 1]) MIX.load(d.letter === 'A' ? 'B' : 'A', au.list[au.i + 1]);
-    }
-    try { d.el.currentTime = pos; } catch (e) { /* début */ }
-    if (resume) d.el.play().catch(() => toast('Touche ▶ pour reprendre la platine ' + d.letter, 3000));
+    this.showLog();
+    this.follow();
   },
 };
 document.addEventListener('visibilitychange', () => { if (document.hidden) RELAY.start(); else RELAY.back(); });
