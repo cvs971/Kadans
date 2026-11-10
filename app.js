@@ -1256,7 +1256,9 @@ const PLS = {
 };
 PLS.load();
 function plsRedraw() {
-  if (PL.dragging || S.tab !== 'playlist') return;
+  if (PL.dragging) return;
+  if (S.tab === 'mix' && MIX.ui.plDraw) { MIX.ui.plDraw(); plMark(); return; }
+  if (S.tab !== 'playlist') return;
   if (PL.sheetDraw) PL.sheetDraw();
   else if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
   else render();
@@ -1359,10 +1361,30 @@ function plMark() {
   const au = MIX.auto && MIX.auto.plId === PLS.active ? MIX.auto : null, cur = au && au.list[au.i];
   document.querySelectorAll('.pl-order li').forEach((li) => li.classList.toggle('pl-now', !!cur && li.dataset.id === cur.id));
 }
+function plOrderEl(again) {
+  const list = plTracks();
+  const mk = (txt, label, fn, off) => h('button', { class: 'icon-btn pl-mv', type: 'button', 'aria-label': label, disabled: !!off, onclick: () => { fn(); again(); } }, txt);
+  const ol = h('ol', { class: 'pl-order' }, list.map((t, i) => h('li', { 'data-id': t.id },
+    h('span', { class: 'pl-grip', 'aria-hidden': 'true' }, '≡'),
+    h('span', { class: 'pl-num' }, String(i + 1)),
+    h('span', { class: 'meta' }, h('span', { class: 't1' }, t.titre), h('span', { class: 't2' }, [t.artiste, t.bpm ? t.bpm + ' BPM' : null].filter(Boolean).join(' · '))),
+    mk('↑', 'Monter', () => { const j = PL.ids.indexOf(t.id); if (j > 0) { PL.ids.splice(j, 1); PL.ids.splice(j - 1, 0, t.id); plSave(); } }, i === 0),
+    mk('↓', 'Descendre', () => { const j = PL.ids.indexOf(t.id); if (j < PL.ids.length - 1) { PL.ids.splice(j, 1); PL.ids.splice(j + 1, 0, t.id); plSave(); } }, i === list.length - 1),
+    mk('✕', 'Retirer', () => { plSet(t.id, false); plSave(); }))));
+  [...ol.children].forEach((row) => plRowDrag(row, ol, (save) => {
+    if (save) {
+      const order = [...ol.children].map((li) => li.dataset.id), shown = new Set(order);
+      let k = 0;
+      PL.ids = PL.ids.map((id) => (shown.has(id) ? order[k++] : id));
+      plSave();
+    }
+    again();
+  }));
+  return ol;
+}
 function plSheet() {
   const draw = () => {
     const list = plTracks();
-    const mk = (txt, label, fn, off) => h('button', { class: 'icon-btn pl-mv', type: 'button', 'aria-label': label, disabled: !!off, onclick: () => { fn(); body.replaceWith(draw()); plRefresh(); } }, txt);
     const again = () => { body.replaceWith(draw()); plRefresh(); plMark(); };
     const body = h('div', { class: 'pg', id: 'pl-sheet-body', style: 'gap:12px' },
       plsBar(again),
@@ -1374,25 +1396,8 @@ function plSheet() {
       h('div', { class: 'pg-seg', role: 'group', 'aria-label': 'Durée de la transition' }, [8, 16, 32].map((n) => h('button', { type: 'button', 'aria-pressed': String(PL.beats === n),
         onclick: () => { PL.beats = n; plSave(); body.replaceWith(draw()); } }, 'Transition ' + n + ' temps'))),
       MIX.auto && MIX.auto.plId === PLS.active ? h('p', { class: 'pg-muted', style: 'margin:0' }, 'Mix en cours : le nouvel ordre s’applique tout de suite aux morceaux qui suivent celui en cours.') : null,
-      h('ol', { class: 'pl-order' }, list.map((t, i) => h('li', { 'data-id': t.id },
-        h('span', { class: 'pl-grip', 'aria-hidden': 'true' }, '≡'),
-        h('span', { class: 'pl-num' }, String(i + 1)),
-        h('span', { class: 'meta' }, h('span', { class: 't1' }, t.titre), h('span', { class: 't2' }, [t.artiste, t.bpm ? t.bpm + ' BPM' : null].filter(Boolean).join(' · '))),
-        mk('↑', 'Monter', () => { const j = PL.ids.indexOf(t.id); if (j > 0) { PL.ids.splice(j, 1); PL.ids.splice(j - 1, 0, t.id); plSave(); } }, i === 0),
-        mk('↓', 'Descendre', () => { const j = PL.ids.indexOf(t.id); if (j < PL.ids.length - 1) { PL.ids.splice(j, 1); PL.ids.splice(j + 1, 0, t.id); plSave(); } }, i === list.length - 1),
-        mk('✕', 'Retirer', () => { plSet(t.id, false); plSave(); })))),
+      plOrderEl(again),
       h('button', { class: 'pg-btn primary', type: 'button', disabled: !list.length, onclick: () => { closeSheet(); MIX.autoStart(plTracks(), PL.beats); } }, MIX.auto && MIX.auto.plId === PLS.active ? 'Relancer depuis le début' : 'Mixer ' + list.length + ' morceau' + (list.length > 1 ? 'x' : '')));
-    const ol = body.querySelector('.pl-order');
-    [...ol.children].forEach((row) => plRowDrag(row, ol, (save) => {
-      if (save) {
-        const order = [...ol.children].map((li) => li.dataset.id), shown = new Set(order);
-        let k = 0;
-        PL.ids = PL.ids.map((id) => (shown.has(id) ? order[k++] : id));
-        plSave();
-      }
-      body.replaceWith(draw());
-      plRefresh();
-    }));
     return body;
   };
   PL.sheetDraw = () => { const b = document.getElementById('pl-sheet-body'); if (b) b.replaceWith(draw()); };
@@ -1457,7 +1462,7 @@ function viewPlaylist() {
   draw();
   return wrap;
 }
-setInterval(() => { if (S.tab === 'playlist' && MIX.auto) { const b = $('#pl-status'); if (b) b.replaceWith(plStatus()); plMark(); } }, 1000);
+setInterval(() => { if ((S.tab === 'playlist' || S.tab === 'mix') && MIX.auto) { const b = $('#pl-status'); if (b) b.replaceWith(plStatus()); plMark(); } }, 1000);
 
 // ------------------------------------------------------------------ vue : Bibliothèque
 function viewLibrary() {
@@ -1979,6 +1984,9 @@ async function updateAwake() {
 // audible ; en arrière-plan on lui rend le son (sans crossfade ni effets, morceaux enchaînés à la fin),
 // et les platines reprennent au même endroit au retour dans l'app.
 const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+// tablette : grand écran (mesuré sur le petit côté, pour ne pas changer en tournant l'appareil)
+const TABLET = Math.min(screen.width, screen.height) >= 600;
+document.body.classList.toggle('tablet', TABLET);
 const SILENCE = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==';
 const RELAY = {
   el: null, active: false, failed: false, deck: null, armed: null, track: null, ownUrl: null, why: '', manual: false, t0: 0, wantPos: null, tries: 0, returning: false, tapFn: null, log: [],
@@ -2012,7 +2020,7 @@ const RELAY = {
   showLog() {
     const old = document.getElementById('relay-log'); if (old) old.remove();
     document.body.append(h('div', { id: 'relay-log', style: 'position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top) + 8px);z-index:200;max-height:45vh;overflow:auto;padding:10px;border-radius:12px;background:#000;color:#fff;font:12px/1.35 monospace;white-space:pre-wrap;-webkit-user-select:text;user-select:text;border:1px solid #666', onclick: (e) => { if (e.target.tagName === 'BUTTON') e.currentTarget.remove(); } },
-      'Arrière-plan v62\n' + this.log.join('\n') + '\n', h('button', { type: 'button', style: 'margin-top:6px;padding:6px 12px' }, 'Fermer')));
+      'Arrière-plan v63\n' + this.log.join('\n') + '\n', h('button', { type: 'button', style: 'margin-top:6px;padding:6px 12px' }, 'Fermer')));
   },
   // lecteur muet : réessaie s'il a été refusé, et reste calé sur la platine
   tick() {
@@ -2234,9 +2242,22 @@ const MIX = {
         d.an = this.ctx.createAnalyser(); d.an.fftSize = 2048;
         d.lvlG = this.ctx.createGain();   // niveau sonore égal (réglé au chargement)
         d.node.connect(d.lvlG);
-        d.lvlG.connect(d.gain).connect(this.master);
+        let tail = d.lvlG;
+        if (TABLET) {   // égaliseur 3 bandes et filtre, avant le crossfader
+          const ctx = this.ctx;
+          d.lo = ctx.createBiquadFilter(); d.lo.type = 'lowshelf'; d.lo.frequency.value = 220;
+          d.mid = ctx.createBiquadFilter(); d.mid.type = 'peaking'; d.mid.frequency.value = 1000; d.mid.Q.value = 0.7;
+          d.hi = ctx.createBiquadFilter(); d.hi.type = 'highshelf'; d.hi.frequency.value = 3500;
+          d.filtN = ctx.createBiquadFilter(); d.filtN.type = 'lowpass'; d.filtN.frequency.value = 22000;
+          d.eq = { lo: 0, mid: 0, hi: 0 }; d.filt = 0; d.keylock = true;
+          d.lp = { on: false, a: 0, b: 0, beats: 0 };
+          d.lvlG.connect(d.lo).connect(d.mid).connect(d.hi).connect(d.filtN);
+          tail = d.filtN;
+        }
+        tail.connect(d.gain).connect(this.master);
+        if (TABLET) { d.vuAn = this.ctx.createAnalyser(); d.vuAn.fftSize = 1024; d.gain.connect(d.vuAn); }
         d.node.connect(d.an);
-        d.pflG = this.ctx.createGain(); d.lvlG.connect(d.pflG).connect(this.cueBus);
+        d.pflG = this.ctx.createGain(); tail.connect(d.pflG).connect(this.cueBus);
         d.el.addEventListener('playing', () => { this.checkStream(d); RELAY.follow(); });
         d.el.addEventListener('error', () => this.onError(d));
         d.el.addEventListener('play', () => this.updateButtons());
@@ -2245,6 +2266,7 @@ const MIX = {
       }
       this.applyXf(); this.applyCue();
       RELAY.setup();
+      if (TABLET) setInterval(() => this.loopCheck(), 25);
     }
     if (this.ctx.state === 'suspended' || this.ctx.state === 'interrupted') this.ctx.resume();   // interrupted : iPhone, retour d'arrière-plan
   },
@@ -2337,6 +2359,7 @@ const MIX = {
       if (d.url) URL.revokeObjectURL(d.url);
       d.url = null; d.stream = !local; d.blobP = null; d.heard = false;
       d.track = t; d.cue = 0; d.peaks = null; d.bend = 0; d.points = null;
+      if (d.lp) d.lp = { on: false, a: 0, b: 0, beats: 0 };
       d.cues = this.savedCues(t.id);
       d.leveled = !!(local && (S.offline.get(t.id) || {}).niv);   // copie déjà au bon niveau : pas de 2e correction
       this.setLevel(d, t);   // niveau mesuré par le PC (sinon estimé une fois l'audio décodé)
@@ -2380,6 +2403,106 @@ const MIX = {
       clearInterval(iv); d.checking = false;
       this.toMemory(d, 'pas de son dans la table de mixage', !d.el.paused);
     }, 200);
+  },
+  // ---- tablette : égaliseur, filtre, boucles, tonalité
+  applyEq(d) {
+    if (!d.lo) return;
+    const t = this.ctx.currentTime;
+    for (const b of ['lo', 'mid', 'hi']) d[b].gain.setTargetAtTime(d.eq[b], t, 0.01);
+    const f = d.filt, n = d.filtN;
+    if (Math.abs(f) < 0.03) { n.type = 'lowpass'; n.frequency.setTargetAtTime(22000, t, 0.01); n.Q.value = 0.7; }
+    else if (f < 0) { n.type = 'lowpass'; n.frequency.setTargetAtTime(20000 * Math.pow(120 / 20000, -f), t, 0.01); n.Q.value = 1.4; }
+    else { n.type = 'highpass'; n.frequency.setTargetAtTime(20 * Math.pow(6000 / 20, f), t, 0.01); n.Q.value = 1.4; }
+  },
+  loopCheck() {
+    for (const d of Object.values(this.decks)) {
+      const lp = d.lp;
+      if (!lp || !lp.on || !d.el || d.el.paused || lp.b <= lp.a) continue;
+      if (d.el.currentTime >= lp.b - 0.004) d.el.currentTime = lp.a + Math.max(0, d.el.currentTime - lp.b);
+    }
+  },
+  autoLoop(letter, beats) {
+    const d = this.decks[letter];
+    if (!d.track || !d.el || !d.el.duration) return;
+    if (d.lp.on && d.lp.beats === beats) d.lp.on = false;   // même bouton : on sort de la boucle
+    else {
+      const a = d.lp.on ? d.lp.a : d.el.currentTime, len = beats * (d.track.bpm ? 60 / d.track.bpm : 0.5);
+      d.lp = { on: true, a, b: Math.min(d.el.duration, a + len), beats };
+    }
+    this.drawLoop(d);
+  },
+  loopScale(letter, k) {   // ½ ou ×2
+    const d = this.decks[letter];
+    if (!d.lp.on || !d.el.duration) return;
+    const len = (d.lp.b - d.lp.a) * k;
+    if (len < 0.03) return;
+    d.lp.b = Math.min(d.el.duration, d.lp.a + len); d.lp.beats *= k;
+    if (d.el.currentTime > d.lp.b) d.el.currentTime = d.lp.a;
+    this.drawLoop(d);
+  },
+  drawLoop(d) { (this.ui['loop' + d.letter] || []).forEach((b) => b.classList.toggle('on', !!d.lp.on && +b.dataset.beats === d.lp.beats)); },
+  setKeylock(d, on) { d.keylock = on; d.el.preservesPitch = on; d.el.webkitPreservesPitch = on; },
+  deckTools(d) {
+    if (!d.el) this.ensure();
+    const knob = (label, value, min, max, step, set) => {
+      const r = h('input', { type: 'range', min, max, step, value, 'aria-label': label + ' platine ' + d.letter, style: 'accent-color:' + d.hex });
+      r.oninput = () => { set(+r.value); this.applyEq(d); };
+      r.ondblclick = () => { r.value = 0; r.oninput(); };   // double-tape : retour à 0
+      return h('label', { class: 'eq' }, h('span', null, label), r);
+    };
+    const key = h('button', { class: 'btn small ghost' + (d.keylock ? ' on' : ''), type: 'button', title: 'Garder la tonalité quand le tempo change',
+      onclick: () => { this.setKeylock(d, !d.keylock); key.classList.toggle('on', d.keylock); } }, 'KEY');
+    const beatBtn = (n) => { const b = h('button', { class: 'btn small ghost', type: 'button', 'data-beats': n, 'aria-label': 'Boucle de ' + n + ' temps', onclick: () => this.autoLoop(d.letter, n) }, String(n)); return b; };
+    this.ui['loop' + d.letter] = [1, 2, 4, 8, 16].map(beatBtn);
+    d.vuC = h('canvas', { class: 'vu', width: 240, height: 8, 'aria-hidden': 'true' });
+    this.drawLoop(d);
+    return h('div', { class: 'deck-tools' },
+      h('div', { class: 'eq-row' },
+        knob('Graves', d.eq.lo, -26, 6, 0.5, (v) => { d.eq.lo = v; }),
+        knob('Médiums', d.eq.mid, -26, 6, 0.5, (v) => { d.eq.mid = v; }),
+        knob('Aigus', d.eq.hi, -26, 6, 0.5, (v) => { d.eq.hi = v; }),
+        knob('Filtre', d.filt, -1, 1, 0.02, (v) => { d.filt = v; })),
+      h('div', { class: 'loop-row' }, h('span', { class: 'lbl' }, 'Boucle'), ...this.ui['loop' + d.letter],
+        h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Boucle deux fois plus courte', onclick: () => this.loopScale(d.letter, 0.5) }, '½'),
+        h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Boucle deux fois plus longue', onclick: () => this.loopScale(d.letter, 2) }, '×2'),
+        key),
+      d.vuC);
+  },
+  // tablette : la bibliothèque et Ma playlist sous les platines, comme sur le PC
+  tabletLib() {
+    const q = h('input', { class: 'input', type: 'search', placeholder: 'Chercher un morceau…', 'aria-label': 'Chercher un morceau', value: this.libQ || '' });
+    const list = h('div', { class: 'tab-list' });
+    const row = (t, on) => {
+      const add = h('button', { class: 'btn small ghost pl-add' + (on ? ' in' : ''), type: 'button', 'aria-label': on ? 'Retirer de la playlist' : 'Ajouter à la playlist',
+        onclick: () => { plSet(t.id, !PL.ids.includes(t.id)); plSave(); this.ui.plDraw(); fill(); } }, on ? '✓' : '＋');
+      const ok = playable(t);
+      const pickBtn = (l) => h('button', { class: 'btn small ghost', type: 'button', disabled: !ok, style: 'color:' + this.decks[l].hex, 'aria-label': 'Charger sur la platine ' + l, onclick: () => this.load(l, t) }, l);
+      return h('div', { class: 'tab-row' + (ok ? '' : ' off') },
+        h('span', { class: 'meta' }, h('span', { class: 't1' }, t.titre), h('span', { class: 't2' }, t.artiste || '')),
+        h('span', { class: 'bpm' }, t.bpm ? String(t.bpm) : '…'), pickBtn('A'), pickBtn('B'), add);
+    };
+    const fill = () => {
+      const s = (this.libQ || '').trim().toLowerCase(), inPl = new Set(PL.ids);
+      const found = allTracks().filter((t) => t.type !== 'video' && (!s || [t.titre, t.artiste, t.bpm].filter(Boolean).join(' ').toLowerCase().includes(s)));
+      const top = list.scrollTop;
+      list.replaceChildren(...(found.length ? found.slice(0, 300).map((t) => row(t, inPl.has(t.id))) : [h('p', { class: 'sub', style: 'text-align:center' }, 'Aucun morceau.')]));
+      list.scrollTop = top;
+    };
+    q.oninput = () => { this.libQ = q.value; fill(); };
+    fill();
+    const side = h('div', { class: 'tab-pl' });
+    this.ui.plDraw = () => {
+      const again = () => { this.ui.plDraw(); fill(); plRefresh(); plMark(); };
+      const n = plTracks();
+      side.replaceChildren(
+        plsBar(again),
+        plOrderEl(again),
+        n.length ? null : h('p', { class: 'sub', style: 'margin:0' }, 'Touche ＋ dans la liste pour ajouter un morceau, puis glisse les lignes pour changer l’ordre.'),
+        h('button', { class: 'pg-btn primary', type: 'button', disabled: !n.length, onclick: () => this.autoStart(plTracks(), PL.beats) },
+          this.auto && this.auto.plId === PLS.active ? 'Relancer depuis le début' : 'Lancer le mix (' + n.length + ')'));
+    };
+    this.ui.plDraw();
+    return h('div', { class: 'tab-lib' }, h('div', { class: 'tab-left' }, h('div', { class: 'search' }, q), list), side);
   },
   // choisir un morceau directement depuis l'écran Mix
   pick(letter) {
@@ -2756,6 +2879,7 @@ const MIX = {
           html: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/></svg>',
           onclick: () => this.togglePfl(d.letter) }),
         h('div', { class: 'tempo' }, lbl, slider)),
+      TABLET ? this.deckTools(d) : null,
       h('div', { class: 'hc-row' }, ...(this.ui['hc' + d.letter] = this.HC_COLORS.map((c, i) => {
         const b = h('button', { class: 'hc' + (d.cues && d.cues[i] != null ? ' set' : ''), type: 'button', style: '--c:' + c,
           'aria-label': 'Hot cue ' + (i + 1) + ' (toucher : placer / y aller ; appui long : effacer)' }, String(i + 1));
@@ -2921,12 +3045,17 @@ const MIX = {
           h('button', { class: 'btn small', type: 'button', onclick: () => this.automix() }, 'Auto-mix'),
           h('button', { class: 'btn small', type: 'button', onclick: () => { this.xf = 0.5; xf.value = 50; this.applyXf(); } }, 'Centre'),
           this.ui.recLand = h('button', { class: 'btn small rec-land' + (this.recorder ? ' rec-on' : ''), type: 'button', onclick: () => this.toggleRec() }, h('span', { class: 'rec-dot' }), this.recorder ? 'Arrêter' : 'Enreg.'))),
+      TABLET ? this.tabletLib() : null,
       h('p', { class: 'sub mixhelp', style: 'text-align:center;margin-top:14px' }, 'Tourne le disque au doigt pour avancer / reculer. En lecture, le bord du disque freine ou pousse. Double-tape un curseur Tempo pour le remettre à 0.'));
   },
   mount() {
     const v = $('#view');
-    if (S.tab !== 'mix') return;
+    if (S.tab !== 'mix' || PL.dragging) return;   // une ligne est tenue : on ne redessine pas sous le doigt
+    const top = v.scrollTop, list = v.querySelector('.tab-list'), listTop = list ? list.scrollTop : 0;
     v.replaceChildren(this.view());
+    v.scrollTop = top;
+    const after = v.querySelector('.tab-list'); if (after) after.scrollTop = listTop;
+    plMark();
     this.loop();
   },
   loop() {
@@ -2938,6 +3067,20 @@ const MIX = {
       prev = now;
       for (const d of Object.values(this.decks)) {
         if (d.disc && d.disc.isConnected) this.drawPlatter(d, dt);
+        if (d.vuC && d.vuC.isConnected && d.vuAn) {   // niveau de la platine
+          const buf = this._vub || (this._vub = new Float32Array(1024));
+          d.vuAn.getFloatTimeDomainData(buf);
+          let p = 0; for (let i = 0; i < buf.length; i++) { const a = Math.abs(buf[i]); if (a > p) p = a; }
+          const lvl = Math.max(0, Math.min(1, (20 * Math.log10(p || 1e-6) + 48) / 48));
+          d.lvl = Math.max(lvl, (d.lvl || 0) - dt * 1.2);
+          const g = d.vuC.getContext('2d'), W = d.vuC.width, H = d.vuC.height, n = 32;
+          g.clearRect(0, 0, W, H);
+          for (let i = 0; i < n; i++) {
+            const k = i / n, lit = k < d.lvl;
+            g.fillStyle = k > 0.92 ? (lit ? '#E8615F' : '#3A2020') : k > 0.75 ? (lit ? '#E6C55A' : '#38301C') : (lit ? '#5FCB8A' : '#1D3628');
+            g.fillRect(i * W / n, 0, W / n - 1, H);
+          }
+        }
         const c = this.ui['canvas' + d.letter];
         if (!c || !c.isConnected) continue;
         const dpr = window.devicePixelRatio || 1, w = c.clientWidth, hh = c.clientHeight;

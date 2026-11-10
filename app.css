@@ -556,6 +556,37 @@ button.mx-lp.on{background:rgba(98,201,140,.26);color:#B4E8C8}
   body.mix-tall .platter{width:min(100%,34vh,360px)}
   body.mix-tall .wave{height:46px}
 }
+/* --- Mode tablette : platines plus petites, égaliseur, boucles, bibliothèque et playlist dans la page Mix --- */
+body.tablet.mix-land .platter{width:clamp(110px,min(13vw,22vh),180px)}
+body.tablet.mix-land .deck{grid-template-areas:"head head" "plat wave" "plat ctrl" "tools tools" "hc hc" "trans trans"}
+body.tablet.mix-tall .deck{grid-template-areas:"head" "plat" "wave" "ctrl" "tools" "hc" "trans"}
+body.tablet .hc-row{grid-area:hc}
+body.tablet.mix-land .wave{height:52px}
+.deck-tools{grid-area:tools;display:flex;flex-direction:column;gap:8px;min-width:0}
+.eq-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.eq{display:flex;flex-direction:column;gap:1px;min-width:0;font-size:11.5px;font-weight:600;color:var(--muted);text-align:center}
+.eq input{width:100%;height:26px;margin:0}
+.loop-row{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.loop-row .lbl{font-size:11.5px;font-weight:600;color:var(--muted);margin-right:2px}
+.loop-row .btn.small{height:36px;min-width:36px;padding:0 6px;font-size:13.5px;border-radius:10px}
+.loop-row .btn.small.on{background:var(--accent);color:#0E0F12;border-color:transparent}
+.vu{display:block;width:100%;height:8px;border-radius:3px}
+.tab-lib{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:12px;margin-top:12px;align-items:start}
+.tab-left,.tab-pl{display:flex;flex-direction:column;gap:10px;padding:12px;border-radius:18px;background:var(--card);min-width:0}
+.tab-pl{position:sticky;top:0}
+.tab-left .search{margin:0}
+.tab-list{display:flex;flex-direction:column;max-height:60vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.tab-row{display:grid;grid-template-columns:minmax(0,1fr) 38px 44px 44px 44px;gap:6px;align-items:center;padding:5px 2px;border-bottom:1px solid rgba(255,255,255,.05)}
+.tab-row.off{opacity:.45}
+.tab-row .meta{display:flex;flex-direction:column;min-width:0}
+.tab-row .t1,.tab-row .t2{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tab-row .t1{font-size:14px;font-weight:600}
+.tab-row .t2{font-size:12px;color:var(--muted)}
+.tab-row .bpm{text-align:right;font-weight:700;font-size:13.5px}
+.tab-row .btn.small{height:38px;padding:0;font-weight:800;border-radius:10px}
+.tab-row .pl-add.in{color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.tab-pl .pl-order{max-height:48vh}
+@media (orientation:portrait){.tab-lib{grid-template-columns:minmax(0,1fr)}.tab-pl{position:static}}
 /* paysage : le crossfader garde sa place à côté de la pré-écoute (il était écrasé) */
 body.mix-land:not(.mix-tall) .xf-row{flex:3 1 0;min-width:0}
 body.mix-land:not(.mix-tall) .hp-row{flex:2 1 0;min-width:0}
