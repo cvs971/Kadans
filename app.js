@@ -1171,7 +1171,7 @@ function askLink() {
 
 // ------------------------------------------------------------------ vue : Playlist
 const PL = { ids: safeList('kadans.playlist').filter((x) => typeof x === 'string'), open: new Set(), q: '', folder: null, beats: +(localStorage.getItem('kadans.plBeats') || 16) };
-const plSave = () => { try { localStorage.setItem('kadans.playlist', JSON.stringify(PL.ids)); } catch (e) { /* rien */ } };
+const plSave = () => { try { localStorage.setItem('kadans.playlist', JSON.stringify(PL.ids)); } catch (e) { /* rien */ } MIX.autoSync(); };
 const plAll = () => allTracks().filter((t) => t.type !== 'video');
 function plTracks() { const by = new Map(plAll().map((t) => [t.id, t])); return PL.ids.map((id) => by.get(id)).filter(Boolean); }
 function plSet(id, on) { const i = PL.ids.indexOf(id); if (on && i < 0) PL.ids.push(id); if (!on && i >= 0) PL.ids.splice(i, 1); }
@@ -1207,7 +1207,54 @@ function plBar() {
     h('button', { class: 'pg-btn primary', type: 'button', disabled: !list.length, onclick: () => MIX.autoStart(plTracks(), PL.beats) },
       MIX.auto ? 'Relancer' : 'Mixer'));
 }
-// fenêtre « Ma playlist » : ordre, options
+// fenêtre « Ma playlist » : glisser une ligne pour changer l'ordre (appui maintenu, ou tout de suite par la poignée)
+function plRowDrag(row, ol, done) {
+  let timer = 0, x0 = 0, y0 = 0, on = false, raf = 0, lastY = 0;
+  const mid = (x) => { const r = x.getBoundingClientRect(); return r.top + r.height / 2; };
+  const renumber = () => [...ol.children].forEach((li, i) => { li.querySelector('.pl-num').textContent = String(i + 1); });
+  const move = () => {   // ce sont les voisines qui bougent : la ligne tenue reste en place dans la page
+    let changed = false, prev, next;
+    while ((prev = row.previousElementSibling) && lastY < mid(prev)) { ol.insertBefore(prev, row.nextElementSibling); changed = true; }
+    while ((next = row.nextElementSibling) && lastY > mid(next)) { ol.insertBefore(next, row); changed = true; }
+    if (changed) renumber();
+  };
+  const loop = () => {   // près du bord de la liste : elle défile toute seule
+    if (!on) return;
+    const r = ol.getBoundingClientRect();
+    if (lastY < r.top + 36) ol.scrollTop -= 7; else if (lastY > r.bottom - 36) ol.scrollTop += 7;
+    move();
+    raf = requestAnimationFrame(loop);
+  };
+  const begin = () => { on = true; lastY = y0; row.classList.add('pl-dragging'); raf = requestAnimationFrame(loop); };
+  const end = (save) => {
+    clearTimeout(timer);
+    if (!on) return;
+    on = false; cancelAnimationFrame(raf); row.classList.remove('pl-dragging');
+    done(save);
+  };
+  row.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || e.target.closest('button')) return;
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+    clearTimeout(timer);
+    if (e.target.closest('.pl-grip')) { e.stopPropagation(); begin(); }
+    else timer = setTimeout(begin, 250);
+  }, { passive: true });
+  row.addEventListener('touchmove', (e) => {
+    const p = e.touches[0];
+    if (!on) { if (Math.hypot(p.clientX - x0, p.clientY - y0) > 10) clearTimeout(timer); return; }   // on fait défiler la liste
+    e.preventDefault(); e.stopPropagation();   // ni défilement, ni fermeture de la fenêtre
+    lastY = p.clientY;
+    move();
+  }, { passive: false });
+  row.addEventListener('touchend', () => end(true));
+  row.addEventListener('touchcancel', () => end(false));
+  row.addEventListener('contextmenu', (e) => { if (on || timer) e.preventDefault(); });
+}
+// repère le morceau en cours dans la fenêtre
+function plMark() {
+  const au = MIX.auto, cur = au && au.list[au.i];
+  document.querySelectorAll('.pl-order li').forEach((li) => li.classList.toggle('pl-now', !!cur && li.dataset.id === cur.id));
+}
 function plSheet() {
   const draw = () => {
     const list = plTracks();
@@ -1220,16 +1267,30 @@ function plSheet() {
         h('button', { class: 'pg-btn sm', type: 'button', onclick: () => { PL.ids = []; plSave(); closeSheet(); render(); } }, 'Vider')),
       h('div', { class: 'pg-seg', role: 'group', 'aria-label': 'Durée de la transition' }, [8, 16, 32].map((n) => h('button', { type: 'button', 'aria-pressed': String(PL.beats === n),
         onclick: () => { PL.beats = n; localStorage.setItem('kadans.plBeats', String(n)); body.replaceWith(draw()); } }, 'Transition ' + n + ' temps'))),
-      h('ol', { class: 'pl-order' }, list.map((t, i) => h('li', null,
+      MIX.auto ? h('p', { class: 'pg-muted', style: 'margin:0' }, 'Mix en cours : le nouvel ordre s’applique tout de suite aux morceaux qui suivent celui en cours.') : null,
+      h('ol', { class: 'pl-order' }, list.map((t, i) => h('li', { 'data-id': t.id },
+        h('span', { class: 'pl-grip', 'aria-hidden': 'true' }, '≡'),
         h('span', { class: 'pl-num' }, String(i + 1)),
         h('span', { class: 'meta' }, h('span', { class: 't1' }, t.titre), h('span', { class: 't2' }, [t.artiste, t.bpm ? t.bpm + ' BPM' : null].filter(Boolean).join(' · '))),
         mk('↑', 'Monter', () => { const j = PL.ids.indexOf(t.id); if (j > 0) { PL.ids.splice(j, 1); PL.ids.splice(j - 1, 0, t.id); plSave(); } }, i === 0),
         mk('↓', 'Descendre', () => { const j = PL.ids.indexOf(t.id); if (j < PL.ids.length - 1) { PL.ids.splice(j, 1); PL.ids.splice(j + 1, 0, t.id); plSave(); } }, i === list.length - 1),
         mk('✕', 'Retirer', () => { plSet(t.id, false); plSave(); })))),
-      h('button', { class: 'pg-btn primary', type: 'button', disabled: !list.length, onclick: () => { closeSheet(); MIX.autoStart(plTracks(), PL.beats); } }, 'Mixer ' + list.length + ' morceau' + (list.length > 1 ? 'x' : '')));
+      h('button', { class: 'pg-btn primary', type: 'button', disabled: !list.length, onclick: () => { closeSheet(); MIX.autoStart(plTracks(), PL.beats); } }, MIX.auto ? 'Relancer depuis le début' : 'Mixer ' + list.length + ' morceau' + (list.length > 1 ? 'x' : '')));
+    const ol = body.querySelector('.pl-order');
+    [...ol.children].forEach((row) => plRowDrag(row, ol, (save) => {
+      if (save) {
+        const order = [...ol.children].map((li) => li.dataset.id), shown = new Set(order);
+        let k = 0;
+        PL.ids = PL.ids.map((id) => (shown.has(id) ? order[k++] : id));
+        plSave();
+      }
+      body.replaceWith(draw());
+      plRefresh();
+    }));
     return body;
   };
   openSheet(draw, () => { if (S.tab === 'playlist') render(); });
+  plMark();
 }
 function viewPlaylist() {
   const all = plAll();
@@ -1289,7 +1350,7 @@ function viewPlaylist() {
   draw();
   return wrap;
 }
-setInterval(() => { if (S.tab === 'playlist' && MIX.auto) { const b = $('#pl-status'); if (b) b.replaceWith(plStatus()); } }, 1000);
+setInterval(() => { if (S.tab === 'playlist' && MIX.auto) { const b = $('#pl-status'); if (b) b.replaceWith(plStatus()); plMark(); } }, 1000);
 
 // ------------------------------------------------------------------ vue : Bibliothèque
 function viewLibrary() {
@@ -1743,7 +1804,7 @@ $('#sheet').addEventListener('click', (e) => { if (e.target.hasAttribute('data-c
   panel.addEventListener('touchstart', (e) => {
     on = false;
     if (e.touches.length !== 1 || panel.scrollTop > 0) return;
-    if (e.target.closest('input[type=range], input, textarea, select, video, canvas')) return;   // curseurs, saisie… : pas de glisser
+    if (e.target.closest('input[type=range], input, textarea, select, video, canvas, .pl-order')) return;   // curseurs, saisie, liste à réordonner : pas de glisser
     y0 = e.touches[0].clientY; dy = 0; t0 = performance.now(); on = true;
     panel.style.transition = 'none';
   }, { passive: true });
@@ -1919,7 +1980,7 @@ const RELAY = {
     // même morceau : jamais de retour en arrière par rapport à l'endroit où la platine s'était arrêtée
     const pos = this.failed ? d.el.currentTime : d.track === t ? Math.max(el.currentTime, d.el.currentTime) : el.currentTime;
     el.pause(); el.muted = true; this.failed = false; this.armed = null; this.wantPos = null;
-    if (this.why) toast('Arrière-plan (v59) : ' + this.why, 8000);
+    if (this.why) toast('Arrière-plan (v60) : ' + this.why, 8000);
     if ('mediaSession' in navigator) {
       for (const a of ['play', 'pause', 'previoustrack', 'nexttrack']) navigator.mediaSession.setActionHandler(a, null);
       navigator.mediaSession.metadata = null;
@@ -2314,6 +2375,16 @@ const MIX = {
     if (list[1]) this.load('B', list[1]);
     this.auto.timer = setInterval(() => this.autoTick(), 250);
     plRefresh();
+  },
+  // la playlist a changé pendant le mix : ce qui suit le morceau en cours prend le nouvel ordre
+  autoSync() {
+    const au = this.auto; if (!au) return;
+    const lock = au.i + (au.fading ? 1 : 0), kept = au.list.slice(0, lock + 1), running = new Set(au.list.slice(au.i, lock + 1).map((t) => t.id));
+    const order = plTracks().filter((t) => t.type !== 'video' && playable(t)), at = order.findIndex((t) => t.id === kept[kept.length - 1].id);
+    au.list = kept.concat(order.slice(at + 1).filter((t) => !running.has(t.id)));
+    const next = au.list[au.i + 1], other = this.decks[au.cur === 'A' ? 'B' : 'A'];
+    if (!au.fading && !RELAY.active && next && (!other.track || other.track.id !== next.id)) this.load(other.letter, next);
+    plRefresh(); plMark();
   },
   autoTick() {
     const au = this.auto; if (!au || au.fading || RELAY.active) return;
