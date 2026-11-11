@@ -42,6 +42,14 @@ const ICONS = {
 function iconHTML(name, size = 22) { return (ICONS[name] || '').replaceAll('SZ', size); }
 
 // ------------------------------------------------------------------ petit helper DOM
+// App Android : le même code sert, mais on parle du « mobile » au lieu de l'« iPhone » dans tout ce qui s'affiche.
+const ON_ANDROID = (() => { try { return !!window.KadansAndroid; } catch (e) { return false; } })();
+function dev(s) {
+  if (!ON_ANDROID || typeof s !== 'string' || !s.includes('iPhone')) return s;
+  return s.replace(/\b([Dd])e l[’']iPhone/g, '$1u mobile').replace(/\b([Ll])[’']iPhone/g, '$1e mobile')
+    .replace(/\b([Cc])et iPhone/g, '$1e mobile').replace(/iPhone/g, 'mobile');
+}
+if (ON_ANDROID) { const c0 = window.confirm.bind(window); window.confirm = (m) => c0(dev(m)); }
 function h(tag, props, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(props || {})) {
@@ -50,11 +58,11 @@ function h(tag, props, ...kids) {
     else if (k === 'style') el.style.cssText = v;
     else if (k === 'html') el.innerHTML = v;
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
-    else el.setAttribute(k, v === true ? '' : v);
+    else el.setAttribute(k, v === true ? '' : (k === 'title' || k === 'aria-label' || k === 'placeholder' ? dev(String(v)) : v));
   }
   for (const c of kids.flat(Infinity)) {
     if (c == null || c === false) continue;
-    el.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    el.append(c instanceof Node ? c : document.createTextNode(dev(String(c))));
   }
   return el;
 }
@@ -63,7 +71,7 @@ const $ = (s, root = document) => root.querySelector(s);
 
 function toast(msg, ms = 2600) {
   const t = $('#toast');
-  t.textContent = msg;
+  t.textContent = dev(msg);
   t.classList.add('show');
   clearTimeout(toast._t);
   toast._t = setTimeout(() => t.classList.remove('show'), ms);
@@ -1489,7 +1497,7 @@ function viewLibrary() {
     if (val === 'tout' && S.folder != null) openFolder(null);   // « Tout » = tous les morceaux du PC, quel que soit le dossier ouvert
     else renderList();
   } }, label);
-  chips.append(mk('tout', 'Tout'), mk('iphone', 'Sur l’iPhone'), mk('clips', 'Clips'));
+  chips.append(mk('tout', 'Tout'), mk('iphone', ON_ANDROID ? 'Mobile' : 'Sur l’iPhone'), mk('clips', 'Clips'));
   sources.forEach((s) => chips.append(mk('src:' + s, s.replace('Téléchargements Kadans', 'Téléchargés'))));
   const bpmChip = h('button', { class: 'chip accent', type: 'button', 'aria-pressed': String(S.bpmOn), onclick: () => {
     S.bpmOn = !S.bpmOn; bpmChip.setAttribute('aria-pressed', String(S.bpmOn)); range.hidden = !S.bpmOn; renderList();
@@ -1608,13 +1616,13 @@ function rowsSig(list) {
 function refreshTrackRows(periodic) {
   if (DRAG.on) return;   // pas de redessin pendant qu'un morceau est en train d'être glissé
   if (periodic && S.tab === 'biblio' && $('#list') && S.rowsSig === rowsSig(filteredTracks())) {
-    const c = $('#count'); if (c) c.textContent = `${allTracks().length} morceaux · ${S.offline.size} sur l’iPhone`;
+    const c = $('#count'); if (c) c.textContent = dev(`${allTracks().length} morceaux · ${S.offline.size} sur l’iPhone`);
     return;
   }
   try { refreshRows(); } catch (e) { render(); }   // render() affiche l'erreur au lieu d'un écran vide
 }
 function refreshRows() {
-  if (S.tab === 'biblio') { renderList(); const c = $('#count'); if (c) c.textContent = `${allTracks().length} morceaux · ${S.offline.size} sur l’iPhone`; }
+  if (S.tab === 'biblio') { renderList(); const c = $('#count'); if (c) c.textContent = dev(`${allTracks().length} morceaux · ${S.offline.size} sur l’iPhone`); }
   else if (S.tab === 'ajouter') { const r = $('.list-recents'); if (r) { const rec = allTracks().slice(0, 5); r.replaceChildren(...rec.map((t) => trackRow(t, rec))); } }
 }
 function trackRow(t, list) {
