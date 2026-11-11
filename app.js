@@ -2028,12 +2028,16 @@ const RELAY = {
     if (this.tries++ >= 12) { this.trace('déplacement abandonné, reste à ' + el.currentTime.toFixed(1)); this.wantPos = null; return; }
     try { el.currentTime = t; } catch (e) { /* pas encore possible */ }
   },
-  trace(msg) { if (this.log.length < 40) this.log.push(((Date.now() - this.t0) / 1000).toFixed(1) + ' s : ' + msg); },
+  trace(msg) {   // lignes identiques à la suite regroupées (« ×9 ») pour que le journal tienne à l'écran
+    const last = this.log[this.log.length - 1] || '', m = last.match(/^[\d.]+ s : (.*?)(?: ×(\d+))?$/);
+    if (m && m[1] === msg) { this.log[this.log.length - 1] = last.replace(/(?: ×\d+)?$/, ' ×' + ((+m[2] || 1) + 1)); return; }
+    if (this.log.length < 40) this.log.push(((Date.now() - this.t0) / 1000).toFixed(1) + ' s : ' + msg);
+  },
   // journal affiché au retour dans l'app, pour comprendre ce que fait iOS
   showLog() {
     const old = document.getElementById('relay-log'); if (old) old.remove();
     document.body.append(h('div', { id: 'relay-log', style: 'position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top) + 8px);z-index:200;max-height:45vh;overflow:auto;padding:10px;border-radius:12px;background:#000;color:#fff;font:12px/1.35 monospace;white-space:pre-wrap;-webkit-user-select:text;user-select:text;border:1px solid #666', onclick: (e) => { if (e.target.tagName === 'BUTTON') e.currentTarget.remove(); } },
-      'Arrière-plan v67\n' + this.log.join('\n') + '\n', h('button', { type: 'button', style: 'margin-top:6px;padding:6px 12px' }, 'Fermer')));
+      'Arrière-plan v68\n' + this.log.join('\n') + '\n', h('button', { type: 'button', style: 'margin-top:6px;padding:6px 12px' }, 'Fermer')));
   },
   // lecteur muet : réessaie s'il a été refusé, et reste calé sur la platine
   tick() {
@@ -2107,7 +2111,17 @@ const RELAY = {
     this.log = ['secours avant : ' + (el.paused ? 'arrêté' : 'joue') + ', chargé ' + el.readyState + ', à ' + el.currentTime.toFixed(1) + ' / ' + (el.duration || 0).toFixed(1) + ', muet ' + el.muted + ', copie ' + (ready ? 'à lui (' + kind(el.src) + ')' : 'partagée') + ' ; platine à ' + d.el.currentTime.toFixed(1) + ' / ' + (d.el.duration || 0).toFixed(1) + ' (' + kind(d.el.currentSrc) + ') ; moteur ' + MIX.ctx.state];
     this.active = true; this.failed = false; this.manual = false; this.why = ''; this.retried = false; this.deck = d; this.track = d.track;
     el.muted = false;
-    if (el.paused || el.ended) el.play().catch((e) => { this.failed = true; this.note('démarrage refusé (' + (e.name || '?') + ')'); });
+    if (el.paused || el.ended) el.play().catch((e) => { if (!this.retried) { this.failed = true; this.note('démarrage refusé (' + (e.name || '?') + ')'); } });
+    // copie vue vide (iOS ne la charge pas tant que l'app est au premier plan) : nouvelle copie tout de suite
+    if (!(el.duration > 1)) {
+      this.retried = true;
+      const pos = d.el.currentTime, t = d.track;
+      this.trace('copie vide (durée ' + (el.duration || 0).toFixed(1) + ') : nouvelle copie');
+      this.armTrack = null;
+      this.ownSrc(t).then(() => { if (!this.active) return; this.seekTo(pos); return el.play(); })
+        .then(() => this.trace('nouvelle copie : joue'))
+        .catch((e) => { this.failed = true; this.note('nouvelle copie refusée (' + (e.name || '?') + ')'); });
+    }
     MIX.pauseAll();
     this.session();
   },
