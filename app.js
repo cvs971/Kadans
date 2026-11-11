@@ -461,6 +461,20 @@ function askCategory(done, parent) {
       inp, ok);
   });
 }
+// chemin de dossier en couleurs, comme l'arborescence : racine orange, dossier final turquoise
+function pathSpans(path, empty) {
+  if (!path) return [h('span', { class: 'p-root' }, empty)];
+  const seg = path.split('/');
+  return seg.flatMap((x, i) => [i ? h('span', { class: 'p-sep' }, ' › ') : null,
+    h('span', { class: i === 0 ? 'p-root' : i === seg.length - 1 ? 'p-sub' : 'p-mid' }, x)]).filter(Boolean);
+}
+// fil d'Ariane : le dossier racine en orange, le sous-dossier ouvert en turquoise (il ne se confond plus avec le reste)
+function tintCrumbs(c) {
+  const b = [...c.querySelectorAll('button')];
+  if (b.length >= 2) b[1].classList.add('crumb-root');
+  if (b.length >= 3) b[b.length - 1].classList.add('crumb-sub');
+  return c;
+}
 // ---- arbre des dossiers (comme sur le PC) : les sous-dossiers se ferment et s'ouvrent avec la flèche
 const CAT_OPEN = new Set(safeList('kadans.catsOuverts').filter((c) => typeof c === 'string'));
 function saveCatOpen() { try { localStorage.setItem('kadans.catsOuverts', JSON.stringify([...CAT_OPEN])); } catch (e) { /* plein */ } }
@@ -477,7 +491,8 @@ function catTree(selected, onSelect) {
         saveCatOpen(); box.replaceWith(catTree(selected, onSelect));
       } }, open ? '▾' : '▸')
       : h('span', { class: 'cat-arrow none' });
-    return h('div', { class: 'cat-row', style: 'padding-left:' + (4 + depth * 18) + 'px', 'aria-current': selected === val ? 'true' : null }, arrow,
+    const root = selected && selected.includes('/') && val === selected.split('/')[0];
+    return h('div', { class: 'cat-row' + (root ? ' cat-rootsel' : '') + (selected === val && val.includes('/') ? ' sub' : ''), style: 'padding-left:' + (4 + depth * 18) + 'px', 'aria-current': selected === val ? 'true' : null }, arrow,
       h('button', { class: 'cat-name', type: 'button', 'data-lp-cat': val || null, onclick: () => onSelect(val) },
         h('span', { class: 'ico', html: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>' }),
         h('span', { class: 'cat-label' }, label)));
@@ -1511,7 +1526,7 @@ function viewAdd() {
     });
     // « Ranger dans » : une seule ligne ; l'arbre des dossiers (comme sur le PC) s'ouvre par le bas
     const catVal = h('span', { class: 'pg-pick-val' });
-    const drawCatChips = () => { catVal.textContent = S.cat ? S.cat.split('/').join(' › ') : 'Sans catégorie'; };
+    const drawCatChips = () => { catVal.replaceChildren(...pathSpans(S.cat, 'Sans catégorie')); };
     const pick = (val) => { S.cat = val; localStorage.setItem('kadans.cat', val); drawCatChips(); closeSheet(); };
     const catChips = h('button', { class: 'pg-pick', type: 'button', 'aria-label': 'Choisir le dossier', onclick: () => {
       for (let p = S.cat ? parentOf(S.cat) : null; p; p = parentOf(p)) CAT_OPEN.add(p);   // le dossier choisi reste visible
@@ -1817,7 +1832,7 @@ function plsBar(again) {
     PLD.empty.delete(move.value); PLS.rename(nom); PLD.open(move.value); again();
   };
   const emptyHere = D && PLD.empty.has(D) && !PLS.list().some((x) => inDir(x.nom, D)) && !dirs.some((d) => d.startsWith(D + '/'));
-  return h('div', { class: 'pls-bar' }, crumbs,
+  return h('div', { class: 'pls-bar' }, tintCrumbs(crumbs),
     tiles.length ? h('div', { class: 'ftiles', style: 'margin-bottom:0' }, tiles) : h('p', { class: 'pg-muted', style: 'margin:0' }, 'Dossier vide : crée une playlist ici, ou ranges-en une avec « Ranger dans ».'),
     h('div', { class: 'pl-sheet-tools' },
       h('button', { class: 'pg-btn sm', type: 'button', onclick: () => {
@@ -2014,7 +2029,7 @@ function viewPlaylist() {
       if (!confirm(`Désélectionner les ${PL.ids.length} morceau(x) de la playlist ?`)) return;
       PL.ids = []; plSave(); draw(); setCount(); plRefresh();
     } }, ico('close', 15), 'Tout désélectionner (' + PL.ids.length + ')'));
-    folders.replaceChildren(crumbs, ...(tiles.length ? [h('div', { class: 'ftiles' }, tiles)] : []), acts);
+    folders.replaceChildren(tintCrumbs(crumbs), ...(tiles.length ? [h('div', { class: 'ftiles' }, tiles)] : []), acts);
     // lignes de morceaux, comme dans la Bibliothèque, avec une case à cocher
     list.replaceChildren(...(rows.length ? rows.slice(0, 400).map((t) => {
       const ok = playable(t), on = PL.ids.includes(t.id);
@@ -2103,7 +2118,7 @@ function renderFolders() {
   const crumbs = h('div', { class: 'crumbs' }, crumb(null, 'Tous les dossiers'));
   if (F === '') crumbs.append(h('span', { class: 'sep' }, '›'), crumb('', 'Sans catégorie'));
   else if (F) F.split('/').forEach((seg, i, arr) => crumbs.append(h('span', { class: 'sep' }, '›'), crumb(arr.slice(0, i + 1).join('/'), seg)));
-  box.append(crumbs);
+  box.append(tintCrumbs(crumbs));
   // sous-dossiers du dossier ouvert
   const subs = F === '' ? [] : folders.filter((c) => parentOf(c) === (F || null));
   const tile = (f, label) => {

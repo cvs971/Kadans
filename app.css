@@ -668,3 +668,13 @@ body.mix-tall .xf-btns .btn.small{padding:0 9px;font-size:13px}
 .jq{font-size:12.5px;line-height:1.35;color:var(--muted)}
 .jq.ok{color:var(--ok)}.jq.warn{color:#F5C451}
 .jq-act{display:flex;gap:14px}
+/* arborescence : racine orange, sous-dossier en cours turquoise (comme sur le PC) */
+:root{--sub:#4CC9C0}
+.crumbs button[aria-current]{background:rgba(255,255,255,.07)}
+.crumbs button.crumb-root{color:var(--accent)}
+.crumbs button.crumb-root[aria-current]{background:rgba(255,122,69,.14)}
+.crumbs button.crumb-sub{color:var(--sub);background:rgba(76,201,192,.15)}
+.cat-row.cat-rootsel .cat-name{color:#FF9A6B;font-weight:600}
+.cat-row.sub[aria-current="true"]{background:rgba(76,201,192,.14);box-shadow:inset 0 0 0 1px rgba(76,201,192,.55)}
+.cat-row.sub[aria-current="true"] .cat-name,.cat-row.sub[aria-current="true"] .cat-name .ico{color:var(--sub)}
+.p-root{color:var(--accent)}.p-sub{color:var(--sub)}.p-sep{color:#6A6A74}.p-mid{color:var(--text)}
