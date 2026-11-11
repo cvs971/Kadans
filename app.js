@@ -1008,13 +1008,143 @@ function importFiles() {
 // analysé ici (BPM, niveau), rangé dans le dossier choisi, et part sur le PC (même dossier) dès qu'il répond.
 const LOCAL_DL = (() => { try { return !!(NATIVE && NATIVE.canDownload && NATIVE.canDownload()); } catch (e) { return false; } })();
 const LDL = new Map();   // id -> { id, titre, etat, progression, format, message, cree, categorie, url, local }
-function localDownload(url, format, categorie) {
+async function localDownload(url, format, categorie) {
   const id = 'imp-dl' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-  LDL.set(id, { id, titre: '', etat: 'en_attente', progression: 0, format, message: '', cree: Date.now() / 1000, categorie, url, local: true });
-  NATIVE.dlStart(id, url, format);
+  const j = { id, titre: '', etat: 'en_attente', progression: 0, format, message: '', cree: Date.now() / 1000, categorie, url, local: true };
+  LDL.set(id, j);
   renderJobs();
+  let chosen = null;
+  if (format !== 'mp4' && NATIVE.dlProbe && NATIVE.dlSearch) {   // qualité vérifiée avant, comme sur le PC
+    try { chosen = await localQuality(j); } catch (e) { console.warn('qualité', e); }
+  }
+  j.etat = 'en_attente'; j.progression = 0; renderJobs();
+  NATIVE.dlStart(id, chosen || url, format);
+}
+// ---- qualité avant le téléchargement, sur le mobile (PC injoignable) : même méthode que le PC
+// Échantillon (~80 s) mesuré ici ; si les aigus sont coupés, recherche d'une meilleure version de la MÊME chanson
+// (mots du titre, durée, tempo). Sûre : elle est prise à la place ; sinon elle est seulement proposée.
+const NWAIT = new Map();
+function nativeCall(kind, id, ...args) {
+  return new Promise((res) => {
+    NWAIT.set(id, res);
+    try { NATIVE[kind](id, ...args); } catch (e) { NWAIT.delete(id); res(null); return; }
+    setTimeout(() => { if (NWAIT.has(id)) { NWAIT.delete(id); res(null); } }, 240000);
+  });
+}
+const Q_STOP = new Set(['official', 'officiel', 'officielle', 'video', 'clip', 'audio', 'lyrics', 'lyric', 'paroles', 'hd', 'hq', '4k', 'music', 'musique', 'feat', 'ft', 'featuring', 'the', 'le', 'la', 'les', 'de', 'du', 'des', 'et', 'and', 'remastered', 'remaster', 'version', 'original', 'originale', 'visualizer', 'live', 'mv', 'topic', 'vevo', 'prod', 'x']);
+const qWords = (t) => (t || '').toLowerCase().replace(/['’]/g, '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').match(/[a-z0-9]+/g)?.filter((w) => w.length > 1 && !Q_STOP.has(w)) || [];
+function qSplit(title, artist) {
+  let t = (title || '').replace(/[([][^)\]]*[)\]]/g, ' ').replace(/\s+/g, ' ').trim().replace(/^[-| ]+|[-| ]+$/g, '');
+  for (const sep of [' - ', ' – ', ' — ', ' | ', '- ']) if (t.includes(sep)) { const i = t.indexOf(sep); return { artiste: artist || t.slice(0, i).trim(), chanson: t.slice(i + sep.length).trim() }; }
+  return { artiste: artist || '', chanson: t };
+}
+function qSame(ref, c) {
+  const song = qWords(ref.chanson || ref.titre); if (!song.length) return [false, false];
+  const hay = new Set([...qWords(c.titre), ...qWords(c.chaine), ...qWords(c.artiste)]);
+  if (song.filter((w) => !hay.has(w)).length > (song.length >= 4 ? 1 : 0)) return [false, false];
+  const art = qWords(ref.artiste);
+  if (art.length && !art.some((w) => hay.has(w))) return [false, false];
+  const dd = ref.duree && c.duree ? Math.abs(ref.duree - c.duree) : null;
+  if (dd != null && dd > 15) return [false, false];
+  const tempo = ref.bpm && c.bpm ? [1, 0.5, 2].some((k) => Math.abs(ref.bpm * k - c.bpm) <= 2.5) : null;
+  if (tempo === false) return [false, false];
+  return [true, !!(tempo && dd != null && dd <= 6 && art.length)];   // pas de tonalité sur le mobile : durée plus stricte
+}
+async function qSample(id, p) {
+  const res = await fetch('__dl/' + id + '/' + p.fichier, { cache: 'no-store' });
+  if (!res.ok) return null;
+  const blob = await res.blob();
+  const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const ab = await blob.arrayBuffer();
+  const hi = await new Ctx(1, 1, 44100).decodeAudioData(ab.slice(0));
+  const aigus = measureBandwidth(hi);
+  let bpm = null;
+  try {
+    const lo = await new Ctx(1, 1, 11025).decodeAudioData(ab);
+    const a = new Float32Array(lo.length), chs = Math.min(2, lo.numberOfChannels);
+    for (let c = 0; c < chs; c++) { const d = lo.getChannelData(c); for (let i = 0; i < a.length; i++) a[i] += d[i] / chs; }
+    bpm = detectBpm(a.length > 40 * 11025 ? a.subarray(20 * 11025) : a, 11025);
+  } catch (e) { /* tempo inconnu */ }
+  const { artiste, chanson } = qSplit(p.track || p.titre, p.artiste);
+  return { aigus, bpm, titre: p.titre || '', artiste, chanson, chaine: p.chaine || '', duree: p.duree || 0, lien: p.lien, vid: p.vid };
+}
+const qKhz = (x) => (x / 1000).toFixed(1).replace('.', ',') + ' kHz';
+async function localQuality(j) {
+  j.etat = 'qualite'; renderJobs();
+  const p = await nativeCall('dlProbe', j.id, j.url);
+  const ref = p && p.ok ? await qSample(j.id, p) : null;
+  try { NATIVE.dlDone(j.id); } catch (e) { /* rien */ }
+  if (!ref || !ref.aigus) return null;
+  j.qualite = ref.aigus; j.titre = j.titre || ref.titre;
+  if (ref.aigus >= 16000) return null;
+  const niveau = ref.aigus < 13500 ? 'faible' : 'moyenne';
+  if (!/youtu\.?be/.test(j.url)) { j.info = 'Source de qualité ' + niveau + ' (' + qKhz(ref.aigus) + ').'; return null; }
+  j.etat = 'recherche_mieux'; j.progression = 0; renderJobs();
+  const q = [...new Set([...qWords(ref.artiste), ...qWords(ref.chanson || ref.titre)])].join(' ');
+  const found = q ? await nativeCall('dlSearch', j.id + 's', q) : null;
+  const art = new Set(qWords(ref.artiste));
+  const official = (e) => (e.chaine || '').endsWith(' - Topic') || (art.size && [...art].every((w) => qWords(e.chaine).includes(w)));
+  const pool = ((found && found.entries) || []).filter((e) => e.id && e.id !== ref.vid && e.duree && qSame(ref, { ...e, bpm: null })[0])
+    .sort((a, b) => (official(b) - official(a)) || (Math.abs(a.duree - ref.duree) - Math.abs(b.duree - ref.duree))).slice(0, 4);
+  const want = Math.max(17500, ref.aigus + 1500);
+  let sure = null, maybe = null;
+  for (let i = 0; i < pool.length; i++) {
+    j.progression = Math.round((i + 1) * 100 / pool.length); renderJobs();
+    const cid = j.id + 'c' + i;
+    const cp = await nativeCall('dlProbe', cid, 'https://www.youtube.com/watch?v=' + pool[i].id);
+    const c = cp && cp.ok ? await qSample(cid, cp).catch(() => null) : null;
+    try { NATIVE.dlDone(cid); } catch (e) { /* rien */ }
+    if (!c || !c.aigus || c.aigus < want) continue;
+    const [ok, isSure] = qSame(ref, c);
+    if (!ok) continue;
+    if (isSure) { if (!sure || c.aigus > sure.aigus) sure = c; if (sure.aigus >= 19500) break; }
+    else if (!maybe || c.aigus > maybe.aigus) maybe = c;
+  }
+  if (sure) {
+    j.info = 'Meilleure version prise (' + sure.chaine + ') : ' + qKhz(sure.aigus) + ' au lieu de ' + qKhz(ref.aigus);
+    j.qualite = sure.aigus;
+    return sure.lien;
+  }
+  if (maybe) { j.alternative = { lien: maybe.lien, chaine: maybe.chaine, aigus: maybe.aigus }; j.info = 'Source de qualité ' + niveau + ' (' + qKhz(ref.aigus) + '). Une version peut-être meilleure existe (' + maybe.chaine + ', ' + qKhz(maybe.aigus) + ').'; }
+  else j.info = 'Source de qualité ' + niveau + ' (' + qKhz(ref.aigus) + ') : aucune meilleure version trouvée.';
+  return null;
+}
+// jusqu'où montent les aigus (Hz), comme le PC : spectre moyen, dernière fréquence à moins de 45 dB sous le médium
+function measureBandwidth(buf) {
+  const SR = buf.sampleRate, N = 4096, chs = Math.min(2, buf.numberOfChannels);
+  let start = buf.length > 50 * SR ? 45 * SR : 0;
+  const len = Math.min(60 * SR, buf.length - start);
+  if (len < 5 * SR) return null;
+  const a = new Float32Array(len);
+  for (let c = 0; c < chs; c++) { const d = buf.getChannelData(c); for (let i = 0; i < len; i++) a[i] += d[start + i] / chs; }
+  const bits = Math.log2(N), rev = new Uint16Array(N), COS = new Float64Array(N / 2), SIN = new Float64Array(N / 2), hann = new Float64Array(N);
+  for (let i = 0; i < N; i++) { let r = 0; for (let b = 0; b < bits; b++) r |= ((i >> b) & 1) << (bits - 1 - b); rev[i] = r; hann[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1)); }
+  for (let k = 0; k < N / 2; k++) { COS[k] = Math.cos(-2 * Math.PI * k / N); SIN[k] = Math.sin(-2 * Math.PI * k / N); }
+  const re = new Float64Array(N), im = new Float64Array(N), pow = new Float64Array(N / 2 + 1);
+  const frames = Math.floor(len / N);
+  for (let f = 0; f < frames; f++) {
+    for (let i = 0; i < N; i++) { const j = rev[i]; re[j] = a[f * N + i] * hann[i]; im[j] = 0; }
+    for (let size = 2; size <= N; size *= 2) {
+      const half = size / 2, stride = N / size;
+      for (let s0 = 0; s0 < N; s0 += size) for (let k = 0; k < half; k++) {
+        const wr = COS[k * stride], wi = SIN[k * stride], x = s0 + k, y = x + half;
+        const tr = wr * re[y] - wi * im[y], ti = wr * im[y] + wi * re[y];
+        re[y] = re[x] - tr; im[y] = im[x] - ti; re[x] += tr; im[x] += ti;
+      }
+    }
+    for (let k = 0; k <= N / 2; k++) pow[k] += re[k] * re[k] + im[k] * im[k];
+  }
+  const db = Array.from(pow, (v) => 10 * Math.log10(v / frames + 1e-20)), hz = (k) => k * SR / N;
+  const mid = db.filter((_, k) => hz(k) > 1000 && hz(k) < 4000).sort((x, y) => x - y), ref = mid[Math.floor(mid.length / 2)];
+  let last = 0;
+  for (let k = 0; k < db.length; k++) {
+    let s0 = 0; for (let d = -9; d <= 9; d++) s0 += db[Math.min(db.length - 1, Math.max(0, k + d))];
+    if (hz(k) > 2000 && s0 / 19 > ref - 45) last = k;
+  }
+  return last ? Math.round(hz(last)) : null;
 }
 window.kadansDl = (o) => {
+  if (o && (o.type === 'probe' || o.type === 'search')) { const r = NWAIT.get(o.id); if (r) { NWAIT.delete(o.id); r(o); } return; }
   const j = LDL.get(o && o.id);
   if (!j || j.etat === 'analyse' || j.etat === 'termine') return;
   j.etat = o.etat; j.progression = o.pct || 0;
@@ -1444,7 +1574,7 @@ function viewAdd() {
   }
   return wrap;
 }
-const JOB_TXT = { preparation: 'Préparation du téléchargeur (1re fois, ~20 s)…', mise_a_jour: 'Mise à jour du téléchargeur…', analyse: 'Calcul du BPM et rangement…', en_attente: 'En attente', recherche: 'Recherche du morceau…', telechargement: 'Téléchargement', conversion: 'Conversion + calcul du BPM', termine: 'Terminé', erreur: 'Erreur' };
+const JOB_TXT = { qualite: 'Vérification de la qualité…', recherche_mieux: 'Recherche d’une meilleure version…', preparation: 'Préparation du téléchargeur (1re fois, ~20 s)…', mise_a_jour: 'Mise à jour du téléchargeur…', analyse: 'Calcul du BPM et rangement…', en_attente: 'En attente', recherche: 'Recherche du morceau…', telechargement: 'Téléchargement', conversion: 'Conversion + calcul du BPM', termine: 'Terminé', erreur: 'Erreur' };
 function renderJobs() {
   const box = $('#jobs');
   if (!box) return;
@@ -1462,9 +1592,27 @@ function renderJobs() {
           h('span', { style: 'color:var(--muted)' }, j.etat === 'erreur' ? '' : pct + ' %')),
         j.etat === 'erreur' ? null : h('div', { class: 'progress' }, h('div', { style: `width:${pct}%` })),
         h('span', { class: 't2' + (j.etat === 'erreur' ? ' err' : '') },
-          j.format.toUpperCase().replace('MP4', 'Clip') + ' · ' + (j.local ? 'mobile · ' : '') + (j.etat === 'erreur' ? j.message : j.local && j.etat === 'termine' ? 'Sur le mobile ✓' : j.local && j.etat === 'telechargement' ? 'Téléchargement sur le mobile' : JOB_TXT[j.etat] || j.etat))),
+          j.format.toUpperCase().replace('MP4', 'Clip') + ' · ' + (j.local ? 'mobile · ' : '') + (j.etat === 'erreur' ? j.message : j.local && j.etat === 'termine' ? 'Sur le mobile ✓' : j.local && j.etat === 'telechargement' ? 'Téléchargement sur le mobile' : JOB_TXT[j.etat] || j.etat)),
+        jobQuality(j)),
       j.local && j.etat === 'telechargement' ? h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Annuler', html: iconHTML('close', 18), onclick: () => { try { NATIVE.dlCancel(j.id); } catch (e) { /* rien */ } } }) : null));
   }
+}
+// qualité vérifiée avant le téléchargement : résultat, meilleure version prise, ou proposition à écouter
+function jobQuality(j) {
+  const kh = (x) => (x / 1000).toFixed(1).replace('.', ',') + ' kHz';
+  let line = null;
+  if (j.info) line = h('span', { class: 'jq' + (/Meilleure version/.test(j.info) ? ' ok' : ' warn') }, j.info);
+  else if (j.qualite && j.qualite >= 16000 && j.etat !== 'qualite') line = h('span', { class: 'jq ok' }, '✓ Bonne qualité (' + kh(j.qualite) + ')');
+  const a = j.alternative;
+  if (a && j.local && j.etat === 'termine') return h('span', { class: 'jq-box' }, line, h('span', { class: 'jq-act' }, h('button', { class: 'pg-link', type: 'button', onclick: () => window.open(a.lien, '_blank') }, 'Écouter la proposition')));
+  const acts = a && j.etat === 'termine' && j.fichier_id ? h('span', { class: 'jq-act' },
+    h('button', { class: 'pg-link', type: 'button', onclick: () => window.open(a.lien, '_blank') }, 'Écouter la proposition'),
+    h('button', { class: 'pg-link', type: 'button', onclick: async (e) => {
+      e.currentTarget.disabled = true;
+      try { await api('/api/qualite/remplacer', { method: 'POST', json: { id: j.fichier_id, lien: a.lien } }); j.alternative = null; toast('Remplacement en cours : l’ancienne version part à la Corbeille du PC.'); await refreshJobs(); }
+      catch (er) { toast(er.status === 404 || er.status === 405 ? 'Mets à jour Kadans sur le PC (1.9.4 ou plus).' : er.message); }
+    } }, 'Prendre plutôt celle-ci')) : null;
+  return line || acts ? h('span', { class: 'jq-box' }, line, acts) : null;
 }
 function askLink() {
   openSheet(() => {

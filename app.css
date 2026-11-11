@@ -663,3 +663,8 @@ body.mix-tall .xf-btns .btn.small{padding:0 9px;font-size:13px}
 .qbadge{display:inline-block;margin-right:6px;padding:0 5px;border-radius:5px;font-size:10.5px;font-weight:700;line-height:15px;vertical-align:1px}
 .qbadge.mid{background:rgba(245,196,81,.15);color:#F5C451}
 .qbadge.low{background:rgba(255,90,90,.16);color:#FF8F8F}
+/* qualité vérifiée avant le téléchargement */
+.jq-box{display:flex;flex-direction:column;gap:4px;flex-basis:100%;margin-top:2px}
+.jq{font-size:12.5px;line-height:1.35;color:var(--muted)}
+.jq.ok{color:var(--ok)}.jq.warn{color:#F5C451}
+.jq-act{display:flex;gap:14px}
