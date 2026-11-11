@@ -35,6 +35,7 @@ const ICONS = {
   palette: P('<path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 21 9.8C21 6 17 3 12 3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7" r="1"/>'),
   image: P('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>'),
   close: P('<path d="M6 6l12 12M18 6L6 18"/>'),
+  pen: P('<path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3zM14.5 7.5l3 3"/>'),
   folderPlus: P('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 10v6M9 13h6"/>'),
   down: P('<path d="M6 9l6 6 6-6"/>'),
   stop: '<svg width="SZ" height="SZ" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
@@ -477,7 +478,7 @@ function catTree(selected, onSelect) {
       } }, open ? '▾' : '▸')
       : h('span', { class: 'cat-arrow none' });
     return h('div', { class: 'cat-row', style: 'padding-left:' + (4 + depth * 18) + 'px', 'aria-current': selected === val ? 'true' : null }, arrow,
-      h('button', { class: 'cat-name', type: 'button', onclick: () => onSelect(val) },
+      h('button', { class: 'cat-name', type: 'button', 'data-lp-cat': val || null, onclick: () => onSelect(val) },
         h('span', { class: 'ico', html: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>' }),
         h('span', { class: 'cat-label' }, label)));
   };
@@ -489,6 +490,100 @@ function catTree(selected, onSelect) {
   box.append(list, acts);
   return box;
 }
+
+// ---- appui long sur un dossier : menu Renommer / Créer un sous-dossier / Supprimer
+// Il suffit de mettre data-lp-cat="<dossier de musique>" ou data-lp-pld="<dossier de playlists>" sur l'élément.
+// Le toucher qui suit l'appui long n'ouvre pas le dossier.
+(() => {
+  let timer = 0, x0 = 0, y0 = 0, fired = false;
+  const stop = () => { clearTimeout(timer); timer = 0; };
+  const target = (e) => (e.target && e.target.closest ? e.target.closest('[data-lp-cat],[data-lp-pld]') : null);
+  document.addEventListener('pointerdown', (e) => {
+    const t = target(e);
+    fired = false; stop();
+    if (!t || e.button > 0) return;
+    x0 = e.clientX; y0 = e.clientY;
+    timer = setTimeout(() => {
+      timer = 0; fired = true;
+      try { if (navigator.vibrate) navigator.vibrate(15); } catch (er) { /* rien */ }
+      if (t.dataset.lpCat) catMenu(t.dataset.lpCat); else plsDirMenu(t.dataset.lpPld);
+    }, 550);
+  }, true);
+  document.addEventListener('pointermove', (e) => { if (timer && Math.hypot(e.clientX - x0, e.clientY - y0) > 10) stop(); }, true);
+  for (const ev of ['pointerup', 'pointercancel']) document.addEventListener(ev, stop, true);
+  document.addEventListener('click', (e) => { if (fired) { fired = false; e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+  document.addEventListener('contextmenu', (e) => { if (target(e)) e.preventDefault(); }, true);   // pas le menu du système
+})();
+function folderMenuSheet(title, items) {
+  openSheet(() => h('div', null,
+    h('b', { style: 'display:block;margin-bottom:6px' }, title),
+    items.filter(Boolean).map(([icon, label, fn, red]) => h('button', { class: 'menu-item' + (red ? ' red' : ''), type: 'button', onclick: () => { closeSheet(); fn(); } }, ico(icon, 20), label))));
+}
+// remplace le début d'un chemin de dossier (« Zouk/Love » renommé : « Zouk/Love/Slow » suit)
+const swapPrefix = (s, from, to) => (s === from ? to : s.startsWith(from + '/') ? to + s.slice(from.length) : s);
+// Dossier de musique (sur le PC)
+function catMenu(nom, after) {
+  const label = nom.split('/').join(' › ');
+  folderMenuSheet('Dossier « ' + label + ' »', [
+    ['pen', 'Renommer', () => renameCategory(nom, after)],
+    ['folderPlus', 'Créer un sous-dossier', () => askCategory(() => after && after(), nom)],
+    ['close', 'Supprimer', () => deleteCategory(nom, after), true],
+  ]);
+}
+function renameCategory(nom, after) {
+  if (!S.online) { toast('Ton PC doit être joignable pour renommer un dossier.'); return; }
+  openSheet(() => {
+    const inp = h('input', { class: 'input', type: 'text', maxlength: 60, value: nom.split('/').pop(), 'aria-label': 'Nouveau nom du dossier' });
+    const ok = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
+      const nouveau = inp.value.replace(/[\\/]/g, ' ').trim();
+      if (!nouveau) { inp.focus(); return; }
+      ok.disabled = true;
+      try {
+        const d = await api('/api/categories/renommer', { method: 'POST', json: { nom, nouveau } });
+        const to = d.nom;
+        setCats(d.categories.map((c) => c.nom)); S.catsAt = Date.now();
+        // tout ce qui pointait sur l'ancien nom suit
+        if (S.cat) { S.cat = swapPrefix(S.cat, nom, to); localStorage.setItem('kadans.cat', S.cat); }
+        if (S.folder) { S.folder = swapPrefix(S.folder, nom, to); localStorage.setItem('kadans.dossier', S.folder); }
+        if (PL.folder) PL.folder = swapPrefix(PL.folder, nom, to);
+        for (const c of [...CAT_OPEN]) { const n = swapPrefix(c, nom, to); if (n !== c) { CAT_OPEN.delete(c); CAT_OPEN.add(n); } }
+        saveCatOpen();
+        for (const m of S.offline.values()) {
+          if (typeof m.categorie !== 'string') continue;
+          const n = swapPrefix(m.categorie, nom, to);
+          if (n !== m.categorie) { m.categorie = n; DB.putMeta(m); }
+        }
+        closeSheet(); toast('Dossier renommé en « ' + to.split('/').pop() + ' » ✓');
+        await refreshLibrary();
+        if (after) after(); else render();
+      } catch (e) {
+        ok.disabled = false;
+        toast(e.status === 403 ? 'Mets à jour Kadans sur le PC (version 1.9.2 ou plus) pour renommer depuis le téléphone.' : e.message, 5000);
+      }
+    } }, 'Renommer');
+    setTimeout(() => { inp.focus(); inp.select(); }, 50);
+    return h('div', { class: 'card', style: 'background:none;border:0;padding:0' },
+      h('b', null, 'Renommer « ' + nom.split('/').pop() + ' »'),
+      h('p', { class: 'sub', style: 'margin:0' }, 'Le dossier est renommé sur ton PC. Les morceaux restent dedans, sur le téléphone aussi.'),
+      inp, ok);
+  });
+}
+async function deleteCategory(nom, after) {
+  if (!S.online) { toast('Ton PC doit être joignable pour supprimer un dossier.'); return; }
+  if (!confirm('Supprimer le dossier « ' + nom.split('/').join(' › ') + ' » sur ton PC ?')) return;
+  try {
+    const d = await api('/api/categories', { method: 'DELETE', json: { nom } });
+    setCats(d.categories.map((c) => c.nom)); S.catsAt = Date.now();
+    if (S.cat && swapPrefix(S.cat, nom, '\u0000') !== S.cat) { S.cat = ''; localStorage.setItem('kadans.cat', ''); }
+    if (S.folder && swapPrefix(S.folder, nom, '\u0000') !== S.folder) openFolderSilently(parentOf(nom));
+    if (PL.folder && swapPrefix(PL.folder, nom, '\u0000') !== PL.folder) PL.folder = parentOf(nom);
+    toast('Dossier supprimé ✓');
+    if (after) after(); else render();
+  } catch (e) {
+    toast(e.status === 400 ? 'Ce dossier contient des morceaux : range-les ailleurs d’abord, ou supprime-le depuis le PC (ils iront dans la Corbeille).' : e.message, 6000);
+  }
+}
+function openFolderSilently(f) { S.folder = f; if (f == null) localStorage.removeItem('kadans.dossier'); else localStorage.setItem('kadans.dossier', f); }
 // Feuille « Renommer » : renomme le fichier sur le PC (« Artiste - Titre » met aussi à jour l'artiste).
 function renameMenu(t) {
   openSheet(() => {
@@ -1321,6 +1416,42 @@ const PLD = {
   },
   open(d) { this.dir = d; this.save(); },
 };
+// appui long sur un dossier de playlists
+function plsDirMenu(d) {
+  const reopen = () => { if (S.tab === 'playlist') plSheet(); else render(); };
+  const parent = plsDirOf(d), n = PLS.list().filter((x) => x.nom.startsWith(d + '/')).length;
+  const ask = (title, value) => plsClean((prompt(title, value) || '').replace(/[\\/]/g, ' '));
+  // déplace tout ce qui est sous « from » vers « to » ('' = tout en haut)
+  const moveDir = (from, to) => {
+    const map = (s) => swapPrefix(s, from, to).replace(/^\//, '');
+    if (PLS.list().some((x) => map(x.nom).length > 60)) { toast('Nom trop long pour une des playlists (60 caractères au plus, dossiers compris)'); return false; }
+    for (const x of PLS.list()) { const nn = map(x.nom); if (nn !== x.nom) { x.nom = PLS.unique(nn, x); PLS.stamp(x); } }
+    for (const e of [...PLD.empty]) { const nn = map(e); if (nn !== e) { PLD.empty.delete(e); if (nn) PLD.empty.add(nn); } }
+    PLD.dir = PLD.dir === from || PLD.dir.startsWith(from + '/') ? map(PLD.dir) : PLD.dir;
+    PLS.save(); PLS.schedule(); PLD.save();
+    return true;
+  };
+  folderMenuSheet('Dossier « ' + plsLabel(d) + ' »', [
+    ['pen', 'Renommer', () => {
+      const nn = ask('Renommer le dossier', plsLeaf(d)); if (!nn) { reopen(); return; }
+      if (moveDir(d, parent ? parent + '/' + nn : nn)) toast('Dossier renommé ✓');
+      reopen();
+    }],
+    ['folderPlus', 'Créer un sous-dossier', () => {
+      const nn = ask('Nouveau sous-dossier dans « ' + plsLeaf(d) + ' »', ''); if (!nn) { reopen(); return; }
+      const sub = d + '/' + nn;
+      if (sub.length + 2 > 60) toast('Nom trop long (60 caractères au plus, dossiers compris)');
+      else { PLD.empty.add(sub); PLD.open(sub); }
+      reopen();
+    }],
+    ['close', 'Supprimer', () => {
+      const where = parent ? '« ' + plsLabel(parent) + ' »' : 'Toutes les playlists';
+      if (!confirm('Supprimer le dossier « ' + plsLabel(d) + ' » ?' + (n ? '\nSes ' + n + ' playlist(s) ne sont pas supprimées : elles vont dans ' + where + '.' : ''))) { reopen(); return; }
+      if (moveDir(d, parent)) { PLD.empty.delete(d); PLD.save(); toast('Dossier supprimé ✓'); }
+      reopen();
+    }, true],
+  ]);
+}
 // choix de la playlist, en haut de la fenêtre « Ma playlist » : dossiers et playlists en tuiles
 function plsBar(again) {
   const dirs = PLD.all();
@@ -1335,7 +1466,7 @@ function plsBar(again) {
   const tiles = [
     ...dirs.filter((d) => plsDirOf(d) === D).map((d) => {
       const n = PLS.list().filter((x) => inDir(x.nom, d)).length;
-      return h('button', { class: 'ftile', type: 'button', onclick: () => go(d) },
+      return h('button', { class: 'ftile', type: 'button', 'data-lp-pld': d, onclick: () => go(d) },
         h('span', { class: 'ico', html: folderSvg }),
         h('span', { class: 'm' }, h('span', { class: 't1' }, plsLeaf(d)), h('span', { class: 't2' }, n ? n + ' playlist' + (n > 1 ? 's' : '') : 'vide')));
     }),
@@ -1534,7 +1665,7 @@ function viewPlaylist() {
     const subs = F === '' ? [] : fl.filter((c) => parentOf(c) === (F || null));
     const tile = (f, label) => {
       const inside = all.filter((t) => inFolder(t, f)), k = inside.filter((t) => PL.ids.includes(t.id)).length;
-      return h('button', { class: 'ftile' + (k ? ' pl-has' : ''), type: 'button', onclick: () => { PL.folder = f; draw(); $('#view').scrollTop = 0; } },
+      return h('button', { class: 'ftile' + (k ? ' pl-has' : ''), type: 'button', 'data-lp-cat': f || null, onclick: () => { PL.folder = f; draw(); $('#view').scrollTop = 0; } },
         h('span', { class: 'ico', html: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>' }),
         h('span', { class: 'm' }, h('span', { class: 't1' }, label), h('span', { class: 't2' }, inside.length + ' morceau' + (inside.length > 1 ? 'x' : '') + (k ? ' · ' + k + ' coché' + (k > 1 ? 's' : '') : ''))));
     };
@@ -1648,7 +1779,7 @@ function renderFolders() {
   const tile = (f, label) => {
     const inside = all.filter((t) => inFolder(t, f));
     const kept = inside.filter((t) => S.offline.has(t.id)).length;
-    return h('button', { class: 'ftile', type: 'button', 'data-folder': f, onclick: () => openFolder(f) },
+    return h('button', { class: 'ftile', type: 'button', 'data-folder': f, 'data-lp-cat': f || null, onclick: () => openFolder(f) },
       h('span', { class: 'ico', html: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>' }),
       h('span', { class: 'm' }, h('span', { class: 't1' }, label),
         h('span', { class: 't2' }, kept + ' morceau' + (kept > 1 ? 'x' : '') + ' sur l’iPhone')));   // seulement ceux gardés ici, pas le total du PC

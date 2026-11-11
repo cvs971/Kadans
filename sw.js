@@ -1,5 +1,5 @@
 /* Kadans — service worker : garde l'app disponible sans connexion. */
-const CACHE = 'kadans-v73';
+const CACHE = 'kadans-v74';
 const SHELL = ['./', './index.html', './app.css', './app.js', './manifest.webmanifest', './icon.svg', './icon-180.png', './icon-192.png', './icon-512.png', './jsqr.js'];
 
 self.addEventListener('install', (e) => {

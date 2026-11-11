@@ -609,3 +609,5 @@ body.mix-land:not(.mix-tall) .hp-row{flex:2 1 0;min-width:0}
 .factions.pl-acts{flex-wrap:nowrap}
 .factions.pl-acts .btn{flex:1 1 auto;min-width:0;gap:5px;padding-left:6px;padding-right:6px;letter-spacing:-.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
 .pl-none .ico{color:#FF5A5A}
+/* appui long sur un dossier : pas de sélection de texte ni de menu du système */
+[data-lp-cat],[data-lp-pld]{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
