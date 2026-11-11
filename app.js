@@ -1058,6 +1058,16 @@ async function finishLocal(j, o) {
     toast('Échec : ' + e.message, 6000);
   }
 }
+// ---- tonalité (roue de Camelot, comme sur le PC) : 0 même, 1 compatible, 2 possible, 3 à éviter, null inconnue
+function keyCompat(a, b) {
+  const p = (c) => { const m = /^(\d{1,2})([AB])$/.exec(c || ''); return m ? { n: +m[1], m: m[2] } : null; };
+  const x = p(a), y = p(b); if (!x || !y) return null;
+  if (x.n === y.n) return x.m === y.m ? 0 : 1;
+  const d = (y.n - x.n + 12) % 12;
+  if (x.m === y.m && (d === 1 || d === 11)) return 1;
+  if (x.m === y.m && (d === 2 || d === 10)) return 2;
+  return 3;
+}
 // ---- BPM et niveau calculés sur le téléphone (même méthode que le PC : flux spectral + autocorrélation)
 async function analyzeAudio(blob) {
   const out = { bpm: null, lufs: null, duree: 0 };
@@ -3140,9 +3150,11 @@ const MIX = {
   },
   autoTick() {
     const au = this.auto; if (!au || au.fading || RELAY.active) return;
-    const cur = this.decks[au.cur], next = au.list[au.i + 1];
+    const cur = this.decks[au.cur];
+    if (au.free) this.freeFill(au);
+    const next = au.list[au.i + 1];
     const dur = cur.el.duration || 0, t = cur.el.currentTime;
-    if (!next) { if (cur.el.ended || (dur && t >= dur - 0.3)) { this.autoStop(); toast('Fin de la playlist', 2500); } return; }
+    if (!next) { if (cur.el.ended || (dur && t >= dur - 0.3)) { this.autoStop(); toast(au.free ? 'Mix auto : plus aucun morceau à enchaîner' : 'Fin de la playlist', 2500); } return; }
     const start = cur.points ? cur.points.mixStart : (dur ? dur - 16 : Infinity);
     if (cur.el.ended || (dur && t >= start)) this.autoFade();
   },
@@ -3172,7 +3184,9 @@ const MIX = {
   async autoFade() {
     const au = this.auto; if (!au || au.fading || !au.list[au.i + 1]) return;
     au.fading = true;
-    const cur = this.decks[au.cur], nl = au.cur === 'A' ? 'B' : 'A', nxt = this.decks[nl], want = au.list[au.i + 1];
+    const cur = this.decks[au.cur], nl = au.cur === 'A' ? 'B' : 'A', nxt = this.decks[nl];
+    if (au.free && nxt.track && nxt.track.type !== 'video' && nxt.track.id !== cur.track.id) au.list[au.i + 1] = nxt.track;
+    const want = au.list[au.i + 1];
     if (!nxt.track || nxt.track.id !== want.id) await this.load(nl, want);
     if (this.auto !== au) return;
     try { nxt.el.currentTime = nxt.points ? nxt.points.intro : 0; } catch (e) { /* début */ }
@@ -3201,6 +3215,7 @@ const MIX = {
       cur.el.pause();
       au.i++; au.cur = nl; au.fading = false; au.fade = 0;
       cur.tempo = 0; this.applyRate(cur, true); if (cur.setTempoUI) cur.setTempoUI();
+      if (au.free) this.freeFill(au);   // mix auto : le plus compatible se prépare sur la platine libérée
       const after = au.list[au.i + 1];
       if (after) this.load(cur.letter, after);
       plRefresh();
@@ -3218,7 +3233,61 @@ const MIX = {
     clearInterval(this.autoTimer);
     this.fadeFinish = null; this.fadeTarget = null;
     this.auto = null;
+    this.freeButton();
     if (was && !quiet) plRefresh();
+  },
+  // ---- Mix auto : les deux morceaux chargés s'enchaînent tout seuls, juste avant que celui qui joue baisse ;
+  // ensuite Kadans choisit le plus compatible (tempo proche, tonalité, même dossier, pas déjà joué) et continue.
+  freeButton() {
+    const b = this.ui.free; if (!b || !b.isConnected) return;
+    const on = !!(this.auto && this.auto.free);
+    b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on));
+  },
+  freeToggle() {
+    if (this.auto && this.auto.free) { this.autoStop(); toast('Mix auto arrêté', 1800); return; }
+    this.freeStart();
+  },
+  async freeStart() {
+    const A = this.decks.A, B = this.decks.B;
+    const playing = [A, B].filter((d) => d.track && d.el && !d.el.paused);
+    let cur = playing.length === 1 ? playing[0] : (this.xf < 0.5 ? A : B);
+    if (!cur.track) cur = cur === A ? B : A;
+    if (!cur.track) { toast('Charge d’abord un morceau sur une platine (deux, c’est encore mieux).', 3000); return; }
+    if (cur.track.type === 'video') { toast('Le mix auto marche avec des morceaux audio.'); return; }
+    const other = cur === A ? B : A;
+    this.autoStop(true);
+    this.ensure();
+    const au = { list: [cur.track], i: 0, cur: cur.letter, beats: PL.beats || 16, fading: false, fade: 0, plId: null, free: true, played: new Set([cur.track.id]) };
+    if (other.track && other.track.type !== 'video' && other.track.id !== cur.track.id) { au.list.push(other.track); au.played.add(other.track.id); }
+    this.auto = au;
+    this.freeFill(au);
+    const next = au.list[1];
+    if (next && (!other.track || other.track.id !== next.id)) this.load(other.letter, next);
+    if (cur.el.paused) { player.pause(); cur.el.play().catch(() => {}); }
+    au.timer = setInterval(() => this.autoTick(), 250);
+    this.freeButton(); plRefresh();
+    const dur = cur.el.duration || 0, start = cur.points ? cur.points.mixStart : dur - 16;
+    toast(next ? 'Mix auto : « ' + next.titre + ' » entrera ' + (dur ? 'dans ' + fmtTime(Math.max(0, start - cur.el.currentTime)) : 'juste avant la fin') : 'Mix auto activé', 3000);
+  },
+  freeFill(au) {
+    if (au.list[au.i + 1]) return;
+    const ref = au.list[au.i] || {}, onDecks = new Set(Object.values(this.decks).map((d) => d.track && d.track.id));
+    const bpm = ref.bpm ? ref.bpm * this.rate(this.decks[au.cur]) : 0;
+    let best = null, bestS = Infinity;
+    for (const t of allTracks()) {
+      if (t.type === 'video' || !playable(t) || onDecks.has(t.id) || au.played.has(t.id)) continue;
+      let sc = 0;
+      if (bpm && t.bpm) {
+        let r = t.bpm / bpm; if (r > 1.5) r /= 2; else if (r < 0.67) r *= 2;   // moitié / double
+        const pct = Math.abs(r - 1) * 100; sc += pct * 1.5 + (pct > 8 ? 25 : 0);
+      } else sc += 12;
+      const kc = keyCompat(ref.cle, t.cle); sc += kc == null ? 4 : [0, 1, 5, 12][kc];
+      if (ref.categorie != null && t.categorie === ref.categorie) sc -= 3;
+      else if (ref.categorie && t.categorie && t.categorie.split('/')[0] === ref.categorie.split('/')[0]) sc -= 1.5;
+      sc += Math.random() * 1.5;   // un peu de variété d'une séance à l'autre
+      if (sc < bestS) { bestS = sc; best = t; }
+    }
+    if (best) { au.list.push(best); au.played.add(best.id); }
   },
   automix() {
     const A = this.decks.A, B = this.decks.B;
@@ -3517,7 +3586,9 @@ const MIX = {
             h('span', null, '🎧 Pré-écoute'), r, h('span', null, 'Mix'));
         })(),
         h('div', { class: 'xf-btns' },
-          h('button', { class: 'btn small', type: 'button', onclick: () => this.automix() }, 'Auto-mix'),
+          h('button', { class: 'btn small', type: 'button', title: 'Mixer tout de suite vers l’autre platine', onclick: () => this.automix() }, 'Mixer'),
+          this.ui.free = h('button', { class: 'btn small mix-free' + (this.auto && this.auto.free ? ' on' : ''), type: 'button', 'aria-pressed': String(!!(this.auto && this.auto.free)),
+            title: 'Enchaîne tout seul les deux platines juste avant la fin, puis le morceau le plus compatible, et ainsi de suite', onclick: () => this.freeToggle() }, h('span', { class: 'free-dot' }), 'Mix auto'),
           h('button', { class: 'btn small', type: 'button', onclick: () => { this.xf = 0.5; xf.value = 50; this.applyXf(); } }, 'Centre'),
           // téléphone tenu droit : avance, ±4, −/+, repères 1 2 3 et casque sur un 2e panneau
           h('button', { class: 'btn small mix-more-btn', type: 'button', 'aria-expanded': String(document.body.classList.contains('mix-more')), onclick: (e) => {

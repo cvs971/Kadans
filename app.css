@@ -652,3 +652,10 @@ body.mix-tall:not(.tablet):not(.mix-more) .deck-ctrl .btn.hp:not(.on){display:no
 .ui-more summary::-webkit-details-marker{display:none}
 .ui-more[open] summary{margin-bottom:4px}
 .ftile .pl-k{color:var(--accent);font-weight:700}
+/* Mix auto : interrupteur dans la barre du crossfader */
+.mix-free{display:inline-flex;align-items:center;gap:6px}
+.mix-free .free-dot{width:7px;height:7px;border-radius:50%;background:var(--dim);flex-shrink:0}
+.mix-free.on{background:rgba(91,214,154,.16);color:var(--ok);box-shadow:inset 0 0 0 1px rgba(91,214,154,.45)}
+.mix-free.on .free-dot{background:var(--ok);box-shadow:0 0 0 3px rgba(91,214,154,.22)}
+body.mix-tall .xf-btns{gap:5px}
+body.mix-tall .xf-btns .btn.small{padding:0 9px;font-size:13px}
