@@ -2200,8 +2200,9 @@ function refreshRows() {
   else if (S.tab === 'ajouter') { const r = $('.list-recents'); if (r) { const rec = allTracks().slice(0, 5); r.replaceChildren(...rec.map((t) => trackRow(t, rec))); } }
 }
 // qualité réelle (mesurée par le PC) : aigus coupés tôt = la vidéo d'origine venait d'une source médiocre
+const SHOW_QUAL = () => localStorage.getItem('kadans.voirQualite') !== '0';
 function qualBadge(t) {
-  if (!t.aigus || t.aigus >= 16000) return null;
+  if (!t.aigus || t.aigus >= 16000 || !SHOW_QUAL()) return null;
   const low = t.aigus < 13500;
   return h('span', { class: 'qbadge ' + (low ? 'low' : 'mid'), title: 'Aigus jusqu’à ' + (t.aigus / 1000).toFixed(1).replace('.', ',') + ' kHz (bonne source : ~20 kHz)' }, low ? 'Qualité faible' : 'Qualité moy.');
 }
@@ -4119,6 +4120,10 @@ function viewSettings() {
         await removeOffline([...S.offline.values()], true);
         render(); toast('Espace libéré (tout reste sur ton PC)');
       } }) : null,
+    ]),
+    uiGroup('Affichage', [
+      uiRow({ icon: 'music', tint: '#F5C451', title: 'Badges de qualité', sub: '« Qualité moyenne » / « faible » sous le titre',
+        right: uiToggle(SHOW_QUAL(), (v) => { localStorage.setItem('kadans.voirQualite', v ? '1' : '0'); S.rowsSig = null; }, 'Afficher les badges de qualité') }),
     ]),
     bgCard(),
     INSTALLED ? null : uiGroup('Installer l’app', [
