@@ -2002,7 +2002,7 @@ const TABLET = Math.min(screen.width, screen.height) >= 600;
 document.body.classList.toggle('tablet', TABLET);
 const SILENCE = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==';
 const RELAY = {
-  el: null, active: false, failed: false, deck: null, armed: null, track: null, ownUrl: null, why: '', manual: false, t0: 0, wantPos: null, tries: 0, returning: false, tapFn: null, log: [],
+  el: null, active: false, failed: false, deck: null, armed: null, track: null, ownUrl: null, armTrack: null, armUrl: null, retried: false, why: '', manual: false, t0: 0, wantPos: null, tries: 0, returning: false, tapFn: null, log: [],
   // à appeler pendant un geste de l'utilisateur : iOS n'autorise le lecteur qu'à cette condition
   setup() {
     if (!IOS || this.el) return;
@@ -2033,7 +2033,7 @@ const RELAY = {
   showLog() {
     const old = document.getElementById('relay-log'); if (old) old.remove();
     document.body.append(h('div', { id: 'relay-log', style: 'position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top) + 8px);z-index:200;max-height:45vh;overflow:auto;padding:10px;border-radius:12px;background:#000;color:#fff;font:12px/1.35 monospace;white-space:pre-wrap;-webkit-user-select:text;user-select:text;border:1px solid #666', onclick: (e) => { if (e.target.tagName === 'BUTTON') e.currentTarget.remove(); } },
-      'Arrière-plan v63\n' + this.log.join('\n') + '\n', h('button', { type: 'button', style: 'margin-top:6px;padding:6px 12px' }, 'Fermer')));
+      'Arrière-plan v67\n' + this.log.join('\n') + '\n', h('button', { type: 'button', style: 'margin-top:6px;padding:6px 12px' }, 'Fermer')));
   },
   // lecteur muet : réessaie s'il a été refusé, et reste calé sur la platine
   tick() {
@@ -2055,12 +2055,28 @@ const RELAY = {
       if (!this.el.paused) this.el.pause();
       return;
     }
-    if (d !== this.armed || this.el.paused || this.el.src !== d.el.currentSrc) this.arm(d);
+    if (d !== this.armed || this.el.paused || this.armTrack !== d.track || this.el.src !== this.armUrl) this.arm(d);
   },
-  arm(d) {
-    const el = this.el, src = d.el.currentSrc;
+  // Le secours a SA copie du morceau : partager le lien de la platine lui donnait un fichier vide sur iPhone
+  // (journal v63 : chargé, mais « ended à 0.0 » et aucun déplacement possible).
+  async ownSrc(t) {
+    if (this.armTrack === t && this.armUrl) { if (this.el.src !== this.armUrl) this.el.src = this.armUrl; return this.armUrl; }
+    let url = await sourceFor(t);
+    try { url = new URL(url, location.href).href; } catch (e) { /* déjà complet */ }   // même écriture que el.src, pour comparer
+    if (this.armUrl && this.armUrl.startsWith('blob:')) URL.revokeObjectURL(this.armUrl);
+    this.armTrack = t; this.armUrl = url;
+    if (this.el.src !== url) this.el.src = url;
+    return url;
+  },
+  async arm(d) {
+    const el = this.el;
     this.armed = d;
-    if (el.src !== src) el.src = src;
+    if (this.armTrack !== d.track || el.src !== this.armUrl) {
+      if (this.arming === d.track) return;   // copie déjà en préparation
+      this.arming = d.track;
+      try { await this.ownSrc(d.track); } catch (e) { return; } finally { this.arming = null; }
+      if (this.active || this.armed !== d) return;
+    }
     el.muted = true;
     if (Math.abs(el.currentTime - d.el.currentTime) > 0.3) this.seekTo(d.el.currentTime);
     el.playbackRate = d.el.playbackRate;
@@ -2082,12 +2098,14 @@ const RELAY = {
     const d = MIX.audible();
     if (!d || !d.el.currentSrc) return;
     const el = this.el;
-    if (el.src !== d.el.currentSrc) el.src = d.el.currentSrc;
+    const ready = this.armTrack === d.track && el.src === this.armUrl;
+    if (!ready) el.src = this.armTrack === d.track && this.armUrl ? this.armUrl : d.el.currentSrc;   // copie pas encore prête : lien de la platine en dernier recours
     if (Math.abs(el.currentTime - d.el.currentTime) > 0.4) this.seekTo(d.el.currentTime);
     el.playbackRate = d.el.playbackRate;
     this.t0 = Date.now();
-    this.log = ['secours avant : ' + (el.paused ? 'arrêté' : 'joue') + ', chargé ' + el.readyState + ', à ' + el.currentTime.toFixed(1) + ', muet ' + el.muted + ' ; platine à ' + d.el.currentTime.toFixed(1) + ' ; moteur ' + MIX.ctx.state];
-    this.active = true; this.failed = false; this.manual = false; this.why = ''; this.deck = d; this.track = d.track;
+    const kind = (u) => (u || '').startsWith('blob:') ? 'iPhone' : 'PC';
+    this.log = ['secours avant : ' + (el.paused ? 'arrêté' : 'joue') + ', chargé ' + el.readyState + ', à ' + el.currentTime.toFixed(1) + ' / ' + (el.duration || 0).toFixed(1) + ', muet ' + el.muted + ', copie ' + (ready ? 'à lui (' + kind(el.src) + ')' : 'partagée') + ' ; platine à ' + d.el.currentTime.toFixed(1) + ' / ' + (d.el.duration || 0).toFixed(1) + ' (' + kind(d.el.currentSrc) + ') ; moteur ' + MIX.ctx.state];
+    this.active = true; this.failed = false; this.manual = false; this.why = ''; this.retried = false; this.deck = d; this.track = d.track;
     el.muted = false;
     if (el.paused || el.ended) el.play().catch((e) => { this.failed = true; this.note('démarrage refusé (' + (e.name || '?') + ')'); });
     MIX.pauseAll();
@@ -2095,9 +2113,18 @@ const RELAY = {
   },
   async onEnded() {
     if (!this.active) return;
+    // fini bien avant la fin du morceau (fichier vide pour ce lecteur) : nouvelle copie, au même endroit, une fois
+    const dur = this.track && this.track.duree, at = Math.max(this.el.currentTime, this.deck ? this.deck.el.currentTime : 0);
+    if (dur && this.el.currentTime < dur - 3 && !this.retried) {
+      this.retried = true;
+      this.trace('fin trop tôt (' + this.el.currentTime.toFixed(1) + ' / ' + dur.toFixed(0) + ') : nouvelle copie');
+      this.armTrack = null;
+      try { await this.ownSrc(this.track); this.seekTo(at); await this.el.play(); } catch (e) { this.note('nouvelle copie refusée (' + (e.name || '?') + ')'); }
+      return;
+    }
     const au = MIX.auto, next = au && au.list[au.i + 1];
     if (!next) { this.el.pause(); if (au) MIX.autoStop(); return; }
-    au.i++; this.track = next;
+    au.i++; this.track = next; this.retried = false;
     try {
       const url = await sourceFor(next);
       if (!this.active) { if (url.startsWith('blob:')) URL.revokeObjectURL(url); return; }
