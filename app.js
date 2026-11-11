@@ -1443,6 +1443,11 @@ function viewPlaylist() {
     const acts = h('div', { class: 'factions' }, h('button', { class: 'btn small', type: 'button', disabled: !playable_.length, onclick: () => {
       playable_.forEach((t) => plSet(t.id, !allOn)); plSave(); draw(); setCount(); plRefresh();
     } }, ico('check', 18), allOn ? 'Tout décocher (' + rows.length + ')' : 'Tout cocher (' + playable_.length + ')'));
+    // tout désélectionner : vide la playlist entière, quel que soit le dossier ouvert
+    if (PL.ids.length) acts.append(h('button', { class: 'btn small ghost', type: 'button', onclick: () => {
+      if (!confirm(`Désélectionner les ${PL.ids.length} morceau(x) de la playlist ?`)) return;
+      PL.ids = []; plSave(); draw(); setCount(); plRefresh();
+    } }, ico('trash', 18), 'Tout désélectionner (' + PL.ids.length + ')'));
     folders.replaceChildren(crumbs, ...(tiles.length ? [h('div', { class: 'ftiles' }, tiles)] : []), acts);
     // lignes de morceaux, comme dans la Bibliothèque, avec une case à cocher
     list.replaceChildren(...(rows.length ? rows.slice(0, 400).map((t) => {
