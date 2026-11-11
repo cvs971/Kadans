@@ -611,3 +611,44 @@ body.mix-land:not(.mix-tall) .hp-row{flex:2 1 0;min-width:0}
 .pl-none .ico{color:#FF5A5A}
 /* appui long sur un dossier : pas de sélection de texte ni de menu du système */
 [data-lp-cat],[data-lp-pld]{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+/* ---- agencement allégé (v75) ---- */
+h1{font-size:26px;letter-spacing:-.6px}
+.top{margin-bottom:14px}
+.pg{gap:18px}
+.pg-hero h1{font-size:24px}
+.pill.pill-ok{padding:8px;gap:5px;background:none !important;border:0 !important;color:var(--ok)}
+.pill.pill-ok .dot{width:9px;height:9px;box-shadow:0 0 0 3px rgba(91,214,154,.16)}
+.pill-wifi{display:grid;place-items:center}
+/* Ajouter : « Ranger dans » sur une ligne */
+.pg-pick{display:flex;align-items:center;gap:10px;width:100%;height:46px;padding:0 12px 0 14px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.28);color:var(--text);font-size:15.5px;font-weight:600;text-align:left}
+.pg-pick .ico{color:var(--accent);display:grid;place-items:center;flex-shrink:0}
+.pg-pick-val{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pg-import{display:flex;align-items:center;justify-content:center;gap:6px;margin:-8px auto 0;color:var(--muted)}
+.pg-import .ico{display:grid;place-items:center}
+/* Bibliothèque : bouton BPM dans la recherche, tuiles plus calmes, ligne sans bouton télécharger */
+.search.has-bpm .input{padding-right:70px}
+.search-bpm{position:absolute;right:7px;top:50%;transform:translateY(-50%);height:32px;padding:0 11px;border-radius:9px;border:1px solid var(--accent);background:none;color:var(--accent);font-family:var(--display);font-weight:700;font-size:12.5px}
+.search-bpm[aria-pressed="true"]{background:var(--accent);color:#0E0F12}
+.ftile .t2-kept{display:flex;align-items:center;gap:4px}
+.ftile .t2-kept span{display:grid;place-items:center}
+/* Playlist : la playlist choisie en titre, liens au lieu de gros boutons */
+.pl-kicker{display:block;font-size:12px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.pl-title{display:flex;align-items:center;gap:4px;max-width:100%;background:none;border:0;padding:0;color:var(--text);text-align:left}
+.pl-title h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.pl-caret{display:grid;place-items:center;color:var(--accent);transform:rotate(90deg);flex-shrink:0}
+.pl-links{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:-4px 0 6px}
+.pl-links .pg-link{display:inline-flex;align-items:center;gap:5px}
+.pl-links .pg-link:disabled{opacity:.4}
+.pl-links .pl-none{color:var(--muted)}
+/* Mix, téléphone tenu droit : commandes secondaires sur un 2e panneau (bouton Plus) */
+.mix-more-btn{display:none}
+body.mix-tall:not(.tablet) .mix-more-btn{display:inline-flex}
+body.mix-tall:not(.tablet):not(.mix-more) .deck .hc-row,
+body.mix-tall:not(.tablet):not(.mix-more) .deck .transport,
+body.mix-tall:not(.tablet):not(.mix-more) .deck-ctrl .btn.hp:not(.on){display:none}
+.wave .hint{padding:0 6px;text-align:center;line-height:1.15;font-size:12px}
+/* Réglages : explication repliée derrière ⓘ */
+.ui-more summary{cursor:pointer;list-style:none;color:var(--muted);font-weight:600}
+.ui-more summary::-webkit-details-marker{display:none}
+.ui-more[open] summary{margin-bottom:4px}
+.ftile .pl-k{color:var(--accent);font-weight:700}

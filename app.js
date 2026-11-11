@@ -1091,6 +1091,7 @@ function setTab(tab) {
 }
 // ---- Mix : les deux platines côte à côte, en paysage comme téléphone tenu droit (version étroite)
 const LAND = matchMedia('(orientation: landscape)');
+try { if (localStorage.getItem('kadans.mixPlus') === '1') document.body.classList.add('mix-more'); } catch (e) { /* rien */ }
 function mixOrientation() {
   const mix = S.tab === 'mix';
   document.body.classList.toggle('mix-land', mix);
@@ -1139,6 +1140,9 @@ function statusPill() {
     else if (S.online === false) { cls += ' ko'; txt = S.keyRefused ? 'Rescanne le QR du PC' : 'Hors ligne'; }
     else txt = 'Connexion…';
   }
+  // tout va bien : juste une pastille verte (le texte ne s'affiche qu'en cas de souci)
+  if (S.server && S.online === true) return h('button', { class: 'pill pill-ok', id: 'pill', type: 'button', title: txt, 'aria-label': txt, onclick: () => setTab('reglages') },
+    h('span', { class: cls }), WIFI.base ? h('span', { class: 'pill-wifi', html: iconHTML('wifi', 13) }) : null);
   return h('button', { class: 'pill', id: 'pill', type: 'button', onclick: () => setTab('reglages') },
     h('span', { class: cls }), txt);
 }
@@ -1170,7 +1174,7 @@ function uiGroup(label, rows, note) {
   return h('section', { class: 'ui-sec' },
     label ? h('h2', { class: 'ui-h' }, label) : null,
     h('div', { class: 'ui-group' }, rows.filter(Boolean)),
-    note ? h('p', { class: 'ui-note' }, note) : null);
+    note ? (typeof note === 'string' ? h('p', { class: 'ui-note' }, note) : h('div', { class: 'ui-note' }, note)) : null);
 }
 // le logo Kadans (couple qui danse) en image, à la taille voulue
 const logoImg = (px, cls = '') => h('img', { class: 'logo-img ' + cls, src: 'icon-192.png', width: px, height: px, alt: '' });
@@ -1218,11 +1222,16 @@ function viewAdd() {
         e.currentTarget.setAttribute('aria-pressed', 'true');
       } }, label));
     });
-    // dossiers en arbre, comme sur le PC : les sous-dossiers se ferment avec la flèche
-    const catChips = h('div');
-    const pick = (val) => { S.cat = val; localStorage.setItem('kadans.cat', val); drawCatChips(); };
-    const drawCatChips = () => catChips.replaceChildren(catTree(S.cat, pick));
-    for (let p = S.cat ? parentOf(S.cat) : null; p; p = parentOf(p)) CAT_OPEN.add(p);   // le dossier choisi reste visible
+    // « Ranger dans » : une seule ligne ; l'arbre des dossiers (comme sur le PC) s'ouvre par le bas
+    const catVal = h('span', { class: 'pg-pick-val' });
+    const drawCatChips = () => { catVal.textContent = S.cat ? S.cat.split('/').join(' › ') : 'Sans catégorie'; };
+    const pick = (val) => { S.cat = val; localStorage.setItem('kadans.cat', val); drawCatChips(); closeSheet(); };
+    const catChips = h('button', { class: 'pg-pick', type: 'button', 'aria-label': 'Choisir le dossier', onclick: () => {
+      for (let p = S.cat ? parentOf(S.cat) : null; p; p = parentOf(p)) CAT_OPEN.add(p);   // le dossier choisi reste visible
+      openSheet(() => h('div', null, h('b', { style: 'display:block;margin-bottom:8px' }, 'Ranger dans'), catTree(S.cat, pick),
+        h('p', { class: 'pg-muted', style: 'margin:8px 0 0;font-size:12.5px' }, 'Appui long sur un dossier : renommer, créer un sous-dossier, supprimer.')));
+    } }, h('span', { class: 'ico', html: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>' }),
+      catVal, h('span', { class: 'ui-chev', html: iconHTML('chev', 16) }));
     drawCatChips();
     const go = h('button', { class: 'pg-btn primary', type: 'button', onclick: async () => {
       const url = input.value.trim();
@@ -1253,9 +1262,9 @@ function viewAdd() {
         uiToggle(S.autoOffline, (v) => { S.autoOffline = v; localStorage.setItem('kadans.auto', v ? '1' : '0'); }, 'Garder sur l’iPhone automatiquement')),
       go));
   }
-  wrap.append(uiGroup(null, [
-    uiRow({ icon: 'phone', tint: '#7C9CFF', title: 'Importer depuis l’iPhone', sub: 'Fichiers audio de l’app Fichiers', onclick: importFiles, chevron: true }),
-  ]));
+  // importer : un simple lien, sous le bouton Télécharger
+  wrap.append(h('button', { class: 'pg-link pg-import', type: 'button', onclick: importFiles }, ico('phone', 16),
+    ON_ANDROID ? 'Importer des fichiers audio du mobile' : 'Importer depuis l’iPhone (app Fichiers)'));
   wrap.append(h('div', { id: 'syncbar' }));
   wrap.append(h('div', { class: 'pg-jobs', id: 'jobs' }));
   const recents = allTracks().slice(0, 5);
@@ -1542,8 +1551,8 @@ function plBar() {
   const list = plTracks(), total = list.reduce((a, t) => a + (t.duree || 0), 0);
   return h('div', { class: 'pl-bar', id: 'pl-bar' },
     h('button', { class: 'pl-bar-list', type: 'button', onclick: plSheet },
-      h('b', null, plsLabel(PLS.cur().nom)),
-      h('span', null, list.length ? list.length + ' morceau' + (list.length > 1 ? 'x' : '') + ' · ' + (fmtTime(total) || '') + ' · voir l’ordre' : 'Aucun morceau · touche ici pour choisir une playlist')),
+      h('b', null, list.length ? list.length + ' morceau' + (list.length > 1 ? 'x' : '') + (total ? ' · ' + fmtTime(total) : '') : 'Aucun morceau coché'),
+      h('span', null, list.length ? 'Voir et changer l’ordre' : 'Coche des morceaux ci-dessus')),
     h('button', { class: 'pg-btn primary', type: 'button', disabled: !list.length, onclick: () => MIX.autoStart(plTracks(), PL.beats) },
       MIX.auto && MIX.auto.plId === PLS.active ? 'Relancer' : 'Mixer'));
 }
@@ -1644,7 +1653,11 @@ function viewPlaylist() {
   const count = h('p', { class: 'sub' });
   const setCount = () => { const k = plTracks().length; count.textContent = all.length + ' morceaux' + (k ? ' · ' + k + ' coché' + (k > 1 ? 's' : '') : ''); };
   setCount();
-  wrap.append(h('div', { class: 'top', style: 'align-items:flex-end' }, h('div', null, h('h1', null, 'Playlist'), count), statusPill()));
+  // le titre est la playlist choisie : le toucher ouvre le choix des playlists et l'ordre des morceaux
+  wrap.append(h('div', { class: 'top', style: 'align-items:flex-end' }, h('div', { style: 'min-width:0' },
+    h('span', { class: 'pl-kicker' }, 'Playlist'),
+    h('button', { class: 'pl-title', type: 'button', 'aria-label': 'Choisir la playlist', onclick: plSheet },
+      h('h1', null, plsLabel(PLS.cur().nom)), h('span', { class: 'pl-caret', html: iconHTML('chev', 18) })), count), statusPill()));
   wrap.append(plStatus());
   const q = h('input', { class: 'input', type: 'search', placeholder: 'Titre, artiste ou BPM…', 'aria-label': 'Rechercher', value: PL.q });
   wrap.append(h('div', { class: 'search' }, h('span', { html: iconHTML('search', 18), style: 'color:#A3A3AD' }), q));
@@ -1667,23 +1680,22 @@ function viewPlaylist() {
       const inside = all.filter((t) => inFolder(t, f)), k = inside.filter((t) => PL.ids.includes(t.id)).length;
       return h('button', { class: 'ftile' + (k ? ' pl-has' : ''), type: 'button', 'data-lp-cat': f || null, onclick: () => { PL.folder = f; draw(); $('#view').scrollTop = 0; } },
         h('span', { class: 'ico', html: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>' }),
-        h('span', { class: 'm' }, h('span', { class: 't1' }, label), h('span', { class: 't2' }, inside.length + ' morceau' + (inside.length > 1 ? 'x' : '') + (k ? ' · ' + k + ' coché' + (k > 1 ? 's' : '') : ''))));
+        h('span', { class: 'm' }, h('span', { class: 't1' }, label), h('span', { class: 't2', title: k ? k + ' coché(s)' : null }, inside.length + ' morceau' + (inside.length > 1 ? 'x' : ''), k ? h('b', { class: 'pl-k' }, ' · ✓ ' + k) : null)));
     };
     const tiles = subs.map((c) => tile(c, c.split('/').pop()));
     if (F == null && all.some((t) => t.categorie === '')) tiles.push(tile('', 'Sans catégorie'));
     const rows = shown();
     const playable_ = rows.filter((t) => playable(t));
     const allOn = playable_.length && playable_.every((t) => PL.ids.includes(t.id));
-    const acts = h('div', { class: 'factions' }, h('button', { class: 'btn small', type: 'button', disabled: !playable_.length, onclick: () => {
+    // « Tout cocher » et « Tout désélectionner » : de simples liens, sur une ligne
+    const acts = h('div', { class: 'pl-links' }, h('button', { class: 'pg-link', type: 'button', disabled: !playable_.length, onclick: () => {
       playable_.forEach((t) => plSet(t.id, !allOn)); plSave(); draw(); setCount(); plRefresh();
-    } }, ico('check', 18), allOn ? 'Tout décocher (' + rows.length + ')' : 'Tout cocher (' + playable_.length + ')'));
-    // tout désélectionner : vide la playlist entière, quel que soit le dossier ouvert
-    // croix rouge (pas de corbeille : rien n'est supprimé), sur la même ligne que « Tout cocher »
-    if (PL.ids.length) acts.append(h('button', { class: 'btn small ghost pl-none', type: 'button', onclick: () => {
+    } }, ico('check', 15), allOn ? 'Tout décocher (' + rows.length + ')' : 'Tout cocher (' + playable_.length + ')'));
+    // tout désélectionner : vide la playlist entière, quel que soit le dossier ouvert (rien n'est supprimé)
+    if (PL.ids.length) acts.append(h('button', { class: 'pg-link pl-none', type: 'button', onclick: () => {
       if (!confirm(`Désélectionner les ${PL.ids.length} morceau(x) de la playlist ?`)) return;
       PL.ids = []; plSave(); draw(); setCount(); plRefresh();
-    } }, ico('close', 18), 'Tout désélectionner (' + PL.ids.length + ')'));
-    acts.classList.add('pl-acts');
+    } }, ico('close', 15), 'Tout désélectionner (' + PL.ids.length + ')'));
     folders.replaceChildren(crumbs, ...(tiles.length ? [h('div', { class: 'ftiles' }, tiles)] : []), acts);
     // lignes de morceaux, comme dans la Bibliothèque, avec une case à cocher
     list.replaceChildren(...(rows.length ? rows.slice(0, 400).map((t) => {
@@ -1715,7 +1727,11 @@ function viewLibrary() {
     statusPill()));
   const q = h('input', { class: 'input', type: 'search', placeholder: 'Titre, artiste ou BPM…', 'aria-label': 'Rechercher', value: S.query });
   q.oninput = () => { S.query = q.value; renderList(); };
-  wrap.append(h('div', { class: 'search' }, h('span', { html: iconHTML('search', 18), style: 'color:#A3A3AD' }), q));
+  // filtre BPM : un bouton dans la barre de recherche (plus caché au bout des filtres)
+  const bpmChip = h('button', { class: 'search-bpm', type: 'button', 'aria-pressed': String(S.bpmOn), 'aria-label': 'Filtrer par BPM', onclick: () => {
+    S.bpmOn = !S.bpmOn; bpmChip.setAttribute('aria-pressed', String(S.bpmOn)); range.hidden = !S.bpmOn; renderList();
+  } }, 'BPM');
+  wrap.append(h('div', { class: 'search has-bpm' }, h('span', { html: iconHTML('search', 18), style: 'color:#A3A3AD' }), q, bpmChip));
 
   const sources = [...new Set(S.lib.map((t) => t.source).filter(Boolean))];
   const chips = h('div', { class: 'chips' });
@@ -1727,10 +1743,6 @@ function viewLibrary() {
   } }, label);
   chips.append(mk('tout', 'Tout'), mk('iphone', ON_ANDROID ? 'Mobile' : 'Sur l’iPhone'), mk('clips', 'Clips'));
   sources.forEach((s) => chips.append(mk('src:' + s, s.replace('Téléchargements Kadans', 'Téléchargés'))));
-  const bpmChip = h('button', { class: 'chip accent', type: 'button', 'aria-pressed': String(S.bpmOn), onclick: () => {
-    S.bpmOn = !S.bpmOn; bpmChip.setAttribute('aria-pressed', String(S.bpmOn)); range.hidden = !S.bpmOn; renderList();
-  } }, 'BPM');
-  chips.append(bpmChip);
   wrap.append(h('div', { id: 'syncbar', style: 'margin-bottom:12px' }));
   wrap.append(chips);
   const mn = h('input', { class: 'input', type: 'number', inputmode: 'numeric', value: S.bpmMin, 'aria-label': 'BPM minimum' });
@@ -1782,7 +1794,8 @@ function renderFolders() {
     return h('button', { class: 'ftile', type: 'button', 'data-folder': f, 'data-lp-cat': f || null, onclick: () => openFolder(f) },
       h('span', { class: 'ico', html: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>' }),
       h('span', { class: 'm' }, h('span', { class: 't1' }, label),
-        h('span', { class: 't2' }, kept + ' morceau' + (kept > 1 ? 'x' : '') + ' sur l’iPhone')));   // seulement ceux gardés ici, pas le total du PC
+        // seulement ceux gardés ici, pas le total du PC (l'icône téléphone le dit, sans texte coupé)
+        h('span', { class: 't2 t2-kept', title: kept + ' sur l’iPhone' }, h('span', { html: iconHTML('phone', 12) }), kept ? kept + ' morceau' + (kept > 1 ? 'x' : '') : 'aucun')));
   };
   const tiles = subs.map((c) => tile(c, c.split('/').pop()));
   if (F == null && all.some((t) => t.categorie === '')) tiles.push(tile('', 'Sans catégorie'));
@@ -1858,8 +1871,7 @@ function trackRow(t, list) {
   let state;
   if (S.saving.has(t.id)) state = h('span', { class: 'bpm wait', style: 'min-width:46px', 'data-pct': t.id }, S.saving.get(t.id) + '%');
   else if (S.offline.has(t.id)) state = h('span', { class: 'icon-btn state-ok', title: 'Sur l’iPhone', html: iconHTML('check', 20), role: 'img', 'aria-label': 'Sur l’iPhone' });
-  else state = h('button', { class: 'icon-btn state-dl', type: 'button', 'aria-label': 'Garder sur l’iPhone', html: iconHTML('download', 20),
-    onclick: (e) => { e.stopPropagation(); saveOffline(t); } });
+  else state = null;   // « Garder sur l’iPhone » : dans le menu ⋯ (la ligne reste légère)
   const on = decksOf(t);
   const row = h('div', { class: 'track' + (isCur ? ' playing' : '') + on.map((l) => ' on-' + l.toLowerCase()).join('') },
     h('button', { type: 'button', style: 'display:flex;align-items:center;gap:12px;flex:1;min-width:0;background:none;border:0;padding:0;text-align:left',
@@ -3119,7 +3131,7 @@ const MIX = {
   deckView(d) {
     const t = d.track;
     const canvas = h('canvas', { 'aria-hidden': 'true' });
-    const wave = h('div', { class: 'wave' }, canvas, t ? null : h('span', { class: 'hint' }, 'Touche ici pour charger un morceau'));
+    const wave = h('div', { class: 'wave' }, canvas, t ? null : h('span', { class: 'hint' }, 'Touche pour charger'));
     wave.addEventListener('pointerdown', (e) => {
       if (!t) { this.pick(d.letter); return; }
       if (!d.el.duration) return;
@@ -3347,6 +3359,12 @@ const MIX = {
         h('div', { class: 'xf-btns' },
           h('button', { class: 'btn small', type: 'button', onclick: () => this.automix() }, 'Auto-mix'),
           h('button', { class: 'btn small', type: 'button', onclick: () => { this.xf = 0.5; xf.value = 50; this.applyXf(); } }, 'Centre'),
+          // téléphone tenu droit : avance, ±4, −/+, repères 1 2 3 et casque sur un 2e panneau
+          h('button', { class: 'btn small mix-more-btn', type: 'button', 'aria-expanded': String(document.body.classList.contains('mix-more')), onclick: (e) => {
+            const on = document.body.classList.toggle('mix-more');
+            try { localStorage.setItem('kadans.mixPlus', on ? '1' : '0'); } catch (er) { /* plein */ }
+            e.currentTarget.setAttribute('aria-expanded', String(on)); e.currentTarget.textContent = on ? 'Moins ▴' : 'Plus ▾';
+          } }, document.body.classList.contains('mix-more') ? 'Moins ▴' : 'Plus ▾'),
           this.ui.recLand = h('button', { class: 'btn small rec-land' + (this.recorder ? ' rec-on' : ''), type: 'button', onclick: () => this.toggleRec() }, h('span', { class: 'rec-dot' }), this.recorder ? 'Arrêter' : 'Enreg.'))),
       TABLET ? this.tabletLib() : null,
       h('p', { class: 'sub mixhelp', style: 'text-align:center;margin-top:14px' }, 'Tourne le disque au doigt pour avancer / reculer. En lecture, le bord du disque freine ou pousse. Double-tape un curseur Tempo pour le remettre à 0.'));
@@ -3644,6 +3662,15 @@ function wifiHelp() {
     h('div', { style: 'display:flex;gap:8px;justify-content:flex-end' }, check)));
 }
 
+// déjà ouverte depuis l'écran d'accueil (ou app Android) : plus besoin d'expliquer comment l'installer
+const INSTALLED = ON_ANDROID || navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+// « Relier à un PC » : scanner le QR ou coller le lien
+function linkMenu() {
+  folderMenuSheet('Relier à un PC', [
+    ['qr', 'Scanner le QR du PC', scanQR],
+    ['link', 'Coller le lien affiché sous le QR', askLink],
+  ]);
+}
 function viewSettings() {
   const on = S.online === true, off = S.online === false;
   const st = on ? 'Connecté' : off ? 'Injoignable — PC éteint ?' : (S.server ? 'Connexion…' : 'Non relié');
@@ -3667,8 +3694,7 @@ function viewSettings() {
       uiRow({ icon: 'wifi', tint: WIFI.base ? '#5BD69A' : '#A3A3AD', title: 'Wi-Fi de la maison',
         sub: WIFI.base ? 'Direct avec le PC : transferts rapides' : WIFI.info ? (NATIVE && !NATIVE.caFingerprint() ? 'Inactif : touche ici pour l’activer' : 'Inactif : certificat à installer, ou pas à la maison') : 'Disponible avec la nouvelle version de Kadans',
         right: WIFI.base ? 'Actif' : 'Internet', onclick: wifiHelp, chevron: true }),
-      uiRow({ icon: 'qr', tint: '#FF7A45', title: 'Scanner le QR du PC', sub: 'Après un redémarrage du PC', onclick: scanQR, chevron: true }),
-      uiRow({ icon: 'link', tint: '#7C9CFF', title: 'Coller un lien', sub: 'Le lien affiché sous le QR', onclick: askLink, chevron: true }),
+      uiRow({ icon: 'qr', tint: '#FF7A45', title: 'Relier à un PC', sub: 'Scanner le QR ou coller le lien', onclick: linkMenu, chevron: true }),
       on ? uiRow({ icon: 'folder', tint: '#F5C451', title: 'Réanalyser les dossiers', sub: 'Cherche les nouveaux morceaux sur le PC',
         onclick: async () => { await api('/api/scanner', { method: 'POST' }); toast('Analyse des dossiers lancée sur le PC'); }, chevron: true }) : null,
     ], 'Ta musique gardée sur l’iPhone est conservée quand tu relies à nouveau le PC.'),
@@ -3684,7 +3710,7 @@ function viewSettings() {
         right: uiToggle(LEVEL.auto, (v) => { localStorage.setItem('kadans.niveauAuto', v ? '1' : '0'); for (const d of Object.values(MIX.decks)) if (d.track) MIX.setLevel(d, d.track); }, 'Niveau sonore égal sur les platines') }),
       uiRow({ icon: 'music', tint: '#86C29C', title: 'Bibliothèque au même niveau', sub: verGE(S.pcVersion, '1.6.1') ? 'Lecture et morceaux gardés : copies au bon volume préparées par le PC' : 'Demande Kadans 1.6.1 ou plus sur le PC',
         right: uiToggle(localStorage.getItem('kadans.niveauBiblio') !== '0', (v) => localStorage.setItem('kadans.niveauBiblio', v ? '1' : '0'), 'Bibliothèque au même niveau sonore') }),
-    ], 'Les fichiers ne sont jamais modifiés : seul le volume de lecture est corrigé. Les morceaux déjà gardés sur l’iPhone restent comme avant (retire-les puis garde-les à nouveau pour les mettre au même niveau).'),
+    ], h('details', { class: 'ui-more' }, h('summary', null, 'ⓘ Comment ça marche'), 'Les fichiers ne sont jamais modifiés : seul le volume de lecture est corrigé. Les morceaux déjà gardés sur l’iPhone restent comme avant (retire-les puis garde-les à nouveau pour les mettre au même niveau).')),
     uiGroup('Stockage', [
       uiRow({ icon: 'music', tint: '#FF7A45', title: 'Morceaux sur l’iPhone', right: S.offline.size + ' · ' + fmtSize(total) }),
       uiRow({ icon: 'disk', tint: '#A3A3AD', title: 'Espace utilisé par l’app', right: usage }),
@@ -3695,7 +3721,7 @@ function viewSettings() {
       } }) : null,
     ]),
     bgCard(),
-    uiGroup('Installer l’app', [
+    INSTALLED ? null : uiGroup('Installer l’app', [
       h('div', { class: 'ui-block' }, h('ol', { class: 'pg-steps small' },
         h('li', null, h('span', { class: 'pg-num' }, '1'), h('span', null, 'Ouvre cette page dans ', h('b', null, 'Safari'))),
         h('li', null, h('span', { class: 'pg-num' }, '2'), h('span', null, 'Touche ', h('b', null, 'Partager'), ' (carré avec une flèche)')),
