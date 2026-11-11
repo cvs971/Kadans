@@ -659,3 +659,7 @@ body.mix-tall:not(.tablet):not(.mix-more) .deck-ctrl .btn.hp:not(.on){display:no
 .mix-free.on .free-dot{background:var(--ok);box-shadow:0 0 0 3px rgba(91,214,154,.22)}
 body.mix-tall .xf-btns{gap:5px}
 body.mix-tall .xf-btns .btn.small{padding:0 9px;font-size:13px}
+/* qualité réelle mesurée par le PC (aigus coupés = source médiocre) */
+.qbadge{display:inline-block;margin-right:6px;padding:0 5px;border-radius:5px;font-size:10.5px;font-weight:700;line-height:15px;vertical-align:1px}
+.qbadge.mid{background:rgba(245,196,81,.15);color:#F5C451}
+.qbadge.low{background:rgba(255,90,90,.16);color:#FF8F8F}

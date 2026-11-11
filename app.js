@@ -817,7 +817,7 @@ async function saveOffline(item, quiet = false) {
     }
     const cover = await coverP;
     if (cover) coverCache.set(item.id, URL.createObjectURL(cover));
-    const meta = { id: item.id, titre: item.titre, artiste: item.artiste, bpm: item.bpm, duree: item.duree, lufs: item.lufs,
+    const meta = { id: item.id, titre: item.titre, artiste: item.artiste, bpm: item.bpm, duree: item.duree, lufs: item.lufs, aigus: item.aigus, cle: item.cle,
       type: item.type, ext: item.ext, source: item.source, categorie: item.categorie, ajoute: item.ajoute || Date.now() / 1000,
       taille: blob.size, garde: Date.now(), niv };
     await DB.put(meta, blob, cover);
@@ -2036,6 +2036,12 @@ function refreshRows() {
   if (S.tab === 'biblio') { renderList(); const c = $('#count'); if (c) c.textContent = dev(`${allTracks().length} morceaux · ${S.offline.size} sur l’iPhone`); }
   else if (S.tab === 'ajouter') { const r = $('.list-recents'); if (r) { const rec = allTracks().slice(0, 5); r.replaceChildren(...rec.map((t) => trackRow(t, rec))); } }
 }
+// qualité réelle (mesurée par le PC) : aigus coupés tôt = la vidéo d'origine venait d'une source médiocre
+function qualBadge(t) {
+  if (!t.aigus || t.aigus >= 16000) return null;
+  const low = t.aigus < 13500;
+  return h('span', { class: 'qbadge ' + (low ? 'low' : 'mid'), title: 'Aigus jusqu’à ' + (t.aigus / 1000).toFixed(1).replace('.', ',') + ' kHz (bonne source : ~20 kHz)' }, low ? 'Qualité faible' : 'Qualité moy.');
+}
 function trackRow(t, list) {
   const isCur = S.current && S.current.id === t.id;
   let state;
@@ -2049,7 +2055,7 @@ function trackRow(t, list) {
       coverEl(t),
       h('span', { class: 'meta' },
         h('span', { class: 't1' }, on.map((l) => h('span', { class: 'deckbadge ' + l.toLowerCase(), 'aria-label': 'Sur la platine ' + l }, l)), t.titre),
-        h('span', { class: 't2' }, [t.type === 'video' ? 'Clip vidéo' : null, t.artiste, t.duree ? fmtTime(t.duree) : null].filter(Boolean).join(' · ') || t.source || ''))),
+        h('span', { class: 't2' }, qualBadge(t), [t.type === 'video' ? 'Clip vidéo' : null, t.artiste, t.duree ? fmtTime(t.duree) : null].filter(Boolean).join(' · ') || t.source || ''))),
     h('span', { class: 'bpm' + (t.bpm ? '' : ' wait') }, t.bpm ? t.bpm : '…'),
     state,
     h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Options', html: iconHTML('more', 20), onclick: () => trackMenu(t) }));
