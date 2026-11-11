@@ -1541,7 +1541,7 @@ function renderFolders() {
     return h('button', { class: 'ftile', type: 'button', 'data-folder': f, onclick: () => openFolder(f) },
       h('span', { class: 'ico', html: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>' }),
       h('span', { class: 'm' }, h('span', { class: 't1' }, label),
-        h('span', { class: 't2' }, inside.length + ' morceau' + (inside.length > 1 ? 'x' : '') + (kept ? ' · ' + kept + ' sur l’iPhone' : ''))));
+        h('span', { class: 't2' }, kept + ' morceau' + (kept > 1 ? 'x' : '') + ' sur l’iPhone')));   // seulement ceux gardés ici, pas le total du PC
   };
   const tiles = subs.map((c) => tile(c, c.split('/').pop()));
   if (F == null && all.some((t) => t.categorie === '')) tiles.push(tile('', 'Sans catégorie'));
