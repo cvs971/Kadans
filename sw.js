@@ -1,5 +1,5 @@
 /* Kadans — service worker : garde l'app disponible sans connexion. */
-const CACHE = 'kadans-v75';
+const CACHE = 'kadans-v76';
 const SHELL = ['./', './index.html', './app.css', './app.js', './manifest.webmanifest', './icon.svg', './icon-180.png', './icon-192.png', './icon-512.png', './jsqr.js'];
 
 self.addEventListener('install', (e) => {
@@ -13,8 +13,8 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  // Les appels au PC (API, fichiers) ne passent jamais par le cache.
-  if (e.request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.includes('/api/')) return;
+  // Les appels au PC (API, fichiers) et les fichiers téléchargés par l'app Android (__dl) ne passent jamais par le cache.
+  if (e.request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.includes('/api/') || url.pathname.includes('/__dl/')) return;
   // Réseau d'abord (pour avoir la dernière version) ; si le réseau traîne plus de 3 s (4G faible), la copie
   // gardée sur le téléphone s'ouvre tout de suite et la nouvelle version est rangée pour la prochaine fois.
   const net = fetch(e.request).then((res) => {

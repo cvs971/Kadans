@@ -950,6 +950,7 @@ async function uploadToPC(meta) {
   if (!blob) throw new Error('fichier absent');
   const name = ((meta.artiste ? meta.artiste + ' - ' : '') + (meta.titre || 'morceau')).replace(/[\\/:*?"<>|]/g, '_') + '.' + (meta.ext || 'm4a');
   const q = new URLSearchParams({ id: meta.id, nom: name, titre: meta.titre || '' });
+  if (typeof meta.categorie === 'string' && meta.categorie) q.set('categorie', meta.categorie);   // téléchargé sur le mobile : même dossier sur le PC
   const r = await fetch(`${base()}/api/envoyer?${q}`, { method: 'POST', headers: { 'x-kadans-cle': S.key, ...(LOCK.jeton ? { 'x-kadans-jeton': LOCK.jeton } : {}) }, body: blob });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.erreur || 'erreur ' + r.status);
@@ -988,6 +989,7 @@ function importFiles() {
       if (titre.includes(' - ')) { [artiste, titre] = titre.split(' - ', 2).map((x) => x.trim()); }
       const meta = { id: 'imp-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), titre, artiste, bpm: null, duree: 0,
         type: (f.type || '').startsWith('video') || ext === 'mp4' ? 'video' : 'audio', ext, source: 'Importés', ajoute: Date.now() / 1000, taille: f.size };
+      if (meta.type === 'audio') { const an = await analyzeAudio(f); meta.bpm = an.bpm; meta.duree = an.duree; meta.lufs = an.lufs; }
       try { await DB.put(meta, f, null); S.offline.set(meta.id, meta); n++; } catch (e) { toast('Import impossible : ' + e.message); }
     }
     inp.remove();
@@ -1000,6 +1002,151 @@ function importFiles() {
   document.body.append(inp);
   inp.click();
 }
+
+// ------------------------------------------------------------------ télécharger sur le mobile, sans le PC (app Android)
+// L'app Android contient yt-dlp + ffmpeg : PC injoignable, c'est le mobile qui télécharge. Le morceau est
+// analysé ici (BPM, niveau), rangé dans le dossier choisi, et part sur le PC (même dossier) dès qu'il répond.
+const LOCAL_DL = (() => { try { return !!(NATIVE && NATIVE.canDownload && NATIVE.canDownload()); } catch (e) { return false; } })();
+const LDL = new Map();   // id -> { id, titre, etat, progression, format, message, cree, categorie, url, local }
+function localDownload(url, format, categorie) {
+  const id = 'imp-dl' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  LDL.set(id, { id, titre: '', etat: 'en_attente', progression: 0, format, message: '', cree: Date.now() / 1000, categorie, url, local: true });
+  NATIVE.dlStart(id, url, format);
+  renderJobs();
+}
+window.kadansDl = (o) => {
+  const j = LDL.get(o && o.id);
+  if (!j || j.etat === 'analyse' || j.etat === 'termine') return;
+  j.etat = o.etat; j.progression = o.pct || 0;
+  if (o.message) j.message = o.message;
+  if (o.etat === 'termine') { finishLocal(j, o); return; }
+  if (o.etat === 'erreur') toast('Téléchargement impossible : ' + (o.message || 'erreur'), 6000);
+  renderJobs();
+};
+// « Artiste - Titre » dans le nom de la vidéo, comme sur le PC
+function splitTitle(o) {
+  let titre = (o.titre || o.titreBrut || '').trim(), artiste = (o.artiste || '').trim();
+  if (!artiste && titre.includes(' - ')) { const i = titre.indexOf(' - '); artiste = titre.slice(0, i).trim(); titre = titre.slice(i + 3).trim(); }
+  titre = titre.replace(/\s*[([](official|officiel|clip|video|vidéo|audio|lyrics?|paroles|visualizer|hd|4k)[^)\]]*[)\]]\s*/gi, ' ').trim();
+  if (!artiste) artiste = (o.chaine || '').replace(/\s*-\s*Topic$/i, '').trim();
+  return { titre: titre || 'Nouveau morceau', artiste };
+}
+async function finishLocal(j, o) {
+  try {
+    j.etat = 'analyse'; renderJobs();
+    const res = await fetch('__dl/' + j.id + '/' + o.fichier, { cache: 'no-store' });
+    if (!res.ok) throw new Error('fichier illisible (' + res.status + ')');
+    const blob = await res.blob();
+    let cover = null;
+    if (o.pochette) { try { const c = await fetch('__dl/' + j.id + '/media.jpg', { cache: 'no-store' }); if (c.ok) cover = await c.blob(); } catch (e) { /* sans pochette */ } }
+    const { titre, artiste } = splitTitle(o);
+    const ext = o.fichier.split('.').pop().toLowerCase();
+    const an = await analyzeAudio(blob);
+    const meta = { id: j.id, titre, artiste, bpm: an.bpm, duree: o.duree || an.duree || 0, lufs: an.lufs,
+      type: ext === 'mp4' ? 'video' : 'audio', ext, source: 'Téléchargés sur le mobile', categorie: j.categorie || '',
+      ajoute: Date.now() / 1000, taille: blob.size, garde: Date.now(), lien: o.lien || j.url };
+    await DB.put(meta, blob, cover);
+    if (cover) coverCache.set(meta.id, URL.createObjectURL(cover));
+    S.offline.set(meta.id, meta);
+    try { NATIVE.dlDone(j.id); } catch (e) { /* rien */ }
+    j.etat = 'termine'; j.titre = titre; j.fini = Date.now() / 1000;
+    renderJobs(); refreshTrackRows();
+    toast('« ' + titre + ' » est sur ton mobile ✓' + (S.online && S.sendAuto ? ' Envoi au PC…' : ' Il ira sur le PC à la prochaine connexion.'), 4000);
+    if (S.online && S.sendAuto) runUpload();
+  } catch (e) {
+    j.etat = 'erreur'; j.message = e.message; renderJobs();
+    toast('Échec : ' + e.message, 6000);
+  }
+}
+// ---- BPM et niveau calculés sur le téléphone (même méthode que le PC : flux spectral + autocorrélation)
+async function analyzeAudio(blob) {
+  const out = { bpm: null, lufs: null, duree: 0 };
+  try {
+    const SR = 11025;
+    const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const buf = await new Ctx(1, 1, SR).decodeAudioData(await blob.arrayBuffer());
+    out.duree = buf.duration;
+    out.lufs = estimateLufs(buf);
+    const n = buf.length, chs = [];
+    for (let c = 0; c < Math.min(2, buf.numberOfChannels); c++) chs.push(buf.getChannelData(c));
+    // extrait de 90 s à partir de 30 s (ou depuis le début si le morceau est court)
+    let start = 30 * SR, len = 90 * SR;
+    if (n - start < 8 * SR) start = 0;
+    len = Math.min(len, n - start);
+    const a = new Float32Array(len);
+    for (const ch of chs) for (let i = 0; i < len; i++) a[i] += ch[start + i] / chs.length;
+    out.bpm = detectBpm(a, SR);
+  } catch (e) { console.warn('analyse', e); }
+  return out;
+}
+function detectBpm(audio, SR) {
+  const HOP = 128, WIN = 1024, MIN = 70, MAX = 180;
+  const frames = 1 + Math.floor((audio.length - WIN) / HOP);
+  if (frames < 50) return null;
+  // FFT réelle (radix 2) d'une fenêtre de Hann
+  const re = new Float64Array(WIN), im = new Float64Array(WIN), hann = new Float64Array(WIN);
+  for (let i = 0; i < WIN; i++) hann[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (WIN - 1));
+  const rev = new Uint16Array(WIN);
+  for (let i = 0, bits = Math.log2(WIN); i < WIN; i++) { let r = 0; for (let b = 0; b < bits; b++) r |= ((i >> b) & 1) << (bits - 1 - b); rev[i] = r; }
+  const COS = new Float64Array(WIN / 2), SIN = new Float64Array(WIN / 2);   // tables : bien plus rapide que cos/sin à chaque fois
+  for (let k = 0; k < WIN / 2; k++) { COS[k] = Math.cos(-2 * Math.PI * k / WIN); SIN[k] = Math.sin(-2 * Math.PI * k / WIN); }
+  const fft = () => {
+    for (let i = 0; i < WIN; i++) if (rev[i] > i) { const j = rev[i]; let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+    for (let size = 2; size <= WIN; size *= 2) {
+      const half = size / 2, stride = WIN / size;
+      for (let s = 0; s < WIN; s += size) for (let k = 0; k < half; k++) {
+        const wr = COS[k * stride], wi = SIN[k * stride], a = s + k, b = a + half;
+        const tr = wr * re[b] - wi * im[b], ti = wr * im[b] + wi * re[b];
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+      }
+    }
+  };
+  const bins = WIN / 2 + 1;
+  let prev = new Float64Array(bins), cur = new Float64Array(bins);
+  const flux = new Float64Array(frames - 1);
+  for (let f = 0; f < frames; f++) {
+    const o = f * HOP;
+    for (let i = 0; i < WIN; i++) { re[i] = audio[o + i] * hann[i]; im[i] = 0; }
+    fft();
+    for (let k = 0; k < bins; k++) cur[k] = Math.log1p(100 * Math.sqrt(re[k] * re[k] + im[k] * im[k]));
+    if (f) { let s = 0; for (let k = 0; k < bins; k++) { const d = cur[k] - prev[k]; if (d > 0) s += d; } flux[f - 1] = s; }
+    const sw = prev; prev = cur; cur = sw;
+  }
+  // retire la tendance lente (moyenne glissante de 16), garde le positif, centre
+  const n = flux.length, env = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = 0, c = 0;
+    for (let k = i - 8; k < i + 8; k++) if (k >= 0 && k < n) { s += flux[k]; c++; }
+    env[i] = Math.max(0, flux[i] - s / 16);
+  }
+  let mean = 0; for (let i = 0; i < n; i++) mean += env[i]; mean /= n;
+  for (let i = 0; i < n; i++) env[i] -= mean;
+  const fps = SR / HOP, ac = (lag) => { let s = 0; for (let i = 0; i + lag < n; i++) s += env[i] * env[i + lag]; return s; };
+  const lo = Math.floor(60 * fps / MAX), hi = Math.ceil(60 * fps / MIN);
+  const acs = new Map(), get = (l) => { if (!acs.has(l)) acs.set(l, ac(l)); return acs.get(l); };
+  let best = -1, bestScore = 0;
+  for (let lag = lo; lag <= hi; lag++) {
+    const bpm = 60 * fps / lag;
+    if (bpm < MIN || bpm > MAX) continue;
+    let s = get(lag);
+    if (2 * lag < n) s += 0.5 * get(2 * lag);
+    s *= Math.exp(-0.5 * (Math.log2(bpm / 120) / 0.9) ** 2);   // légère préférence autour de 120
+    if (s > bestScore) { bestScore = s; best = lag; }
+  }
+  if (best < 0) return null;
+  const a = get(best - 1), b = get(best), c = get(best + 1), den = a - 2 * b + c;
+  const shift = den ? Math.max(-0.5, Math.min(0.5, 0.5 * (a - c) / den)) : 0;
+  return Math.round(60 * fps / (best + shift));
+}
+// lien partagé depuis YouTube, SoundCloud… (« Partager » → Kadans) : il arrive dans Ajouter
+window.kadansShare = () => {
+  let link = '';
+  try { link = NATIVE && NATIVE.takeShared ? NATIVE.takeShared() : ''; } catch (e) { /* ancienne app */ }
+  if (!link) return;
+  if (S.tab !== 'ajouter') setTab('ajouter');
+  const inp = $('#lien');
+  if (inp) { inp.value = link; toast('Lien reçu : choisis le dossier puis Télécharger'); }
+};
 
 function renderSyncBanner() {
   document.querySelectorAll('#syncbar').forEach((box) => {
@@ -1187,7 +1334,7 @@ function viewAdd() {
     statusPill()));
   wrap.append(h('div', { class: 'pg-hero' },
     h('h1', null, 'Ajouter de la musique'),
-    h('p', null, 'Colle un lien : ton PC le télécharge, l’analyse et le range.')));
+    h('p', null, LOCAL_DL ? 'Colle un lien : ton PC le télécharge et le range. PC injoignable ? Le mobile le fait lui-même.' : 'Colle un lien : ton PC le télécharge, l’analyse et le range.')));
 
   if (!S.server) {
     const step = (n, t1, t2) => h('li', null, h('span', { class: 'pg-num' }, String(n)), h('span', null, h('b', null, t1), h('span', null, t2)));
@@ -1206,7 +1353,7 @@ function viewAdd() {
       wrap.append(h('div', { class: 'pg-alert' },
         h('span', { class: 'pg-alert-ic', html: iconHTML('off', 18) }),
         h('div', null, h('b', null, 'Ton PC ne répond pas'),
-          h('span', null, 'Ta musique sur l’iPhone reste disponible. Allume le PC et lance Kadans pour télécharger.')),
+          h('span', null, LOCAL_DL ? 'Le mobile télécharge lui-même tes liens. Ils iront sur le PC à la prochaine connexion.' : 'Ta musique sur l’iPhone reste disponible. Allume le PC et lance Kadans pour télécharger.')),
         h('button', { class: 'pg-btn sm', type: 'button', onclick: scanQR }, 'Rescanner')));
     }
     const input = h('input', { id: 'lien', class: 'pg-input', type: 'url', inputmode: 'url', autocomplete: 'off',
@@ -1236,6 +1383,12 @@ function viewAdd() {
     const go = h('button', { class: 'pg-btn primary', type: 'button', onclick: async () => {
       const url = input.value.trim();
       if (!/^https?:\/\//.test(url)) { toast('Colle un lien qui commence par https://'); return; }
+      if (LOCAL_DL && S.online !== true) {   // PC injoignable : c'est le mobile qui télécharge
+        localDownload(url, S.format, S.cat);
+        input.value = '';
+        toast('PC injoignable : le mobile télécharge' + (S.cat ? ' dans « ' + S.cat.split('/').join(' › ') + ' »' : '') + '… Garde Kadans ouvert.', 4000);
+        return;
+      }
       go.disabled = true;
       try {
         const json = { url, format: S.format, categorie: S.cat };
@@ -1249,7 +1402,12 @@ function viewAdd() {
         input.value = '';
         toast('C’est parti ! Ton PC télécharge' + (S.cat ? ' dans « ' + S.cat + ' »…' : '…'));
         await refreshJobs();
-      } catch (e) { toast(e.message); }
+      } catch (e) {
+        if (LOCAL_DL && (!e.status || e.status >= 502)) {   // le PC n'a pas répondu (ou le tunnel dit qu'il est éteint) : le mobile prend le relais
+          localDownload(url, S.format, S.cat); input.value = '';
+          toast('PC injoignable : le mobile télécharge… Garde Kadans ouvert.', 4000);
+        } else toast(e.message);
+      }
       go.disabled = false;
     } }, ico('download', 18), 'Télécharger');
     wrap.append(h('div', { class: 'pg-card' },
@@ -1276,12 +1434,13 @@ function viewAdd() {
   }
   return wrap;
 }
-const JOB_TXT = { en_attente: 'En attente', recherche: 'Recherche du morceau…', telechargement: 'Téléchargement', conversion: 'Conversion + calcul du BPM', termine: 'Terminé', erreur: 'Erreur' };
+const JOB_TXT = { preparation: 'Préparation du téléchargeur (1re fois, ~20 s)…', mise_a_jour: 'Mise à jour du téléchargeur…', analyse: 'Calcul du BPM et rangement…', en_attente: 'En attente', recherche: 'Recherche du morceau…', telechargement: 'Téléchargement', conversion: 'Conversion + calcul du BPM', termine: 'Terminé', erreur: 'Erreur' };
 function renderJobs() {
   const box = $('#jobs');
   if (!box) return;
   box.innerHTML = '';
-  const recent = S.jobs.filter((j) => j.etat !== 'termine' || (Date.now() / 1000 - j.cree) < 120).slice(0, 4);
+  const mine = [...LDL.values()].filter((j) => j.etat !== 'termine' || (Date.now() / 1000 - (j.fini || j.cree)) < 120);
+  const recent = [...mine, ...S.jobs.filter((j) => j.etat !== 'termine' || (Date.now() / 1000 - j.cree) < 120)].slice(0, 5);
   if (!recent.length) return;
   box.append(h('span', { class: 'label' }, 'En cours'));
   for (const j of recent) {
@@ -1293,7 +1452,8 @@ function renderJobs() {
           h('span', { style: 'color:var(--muted)' }, j.etat === 'erreur' ? '' : pct + ' %')),
         j.etat === 'erreur' ? null : h('div', { class: 'progress' }, h('div', { style: `width:${pct}%` })),
         h('span', { class: 't2' + (j.etat === 'erreur' ? ' err' : '') },
-          j.format.toUpperCase().replace('MP4', 'Clip') + ' · ' + (j.etat === 'erreur' ? j.message : JOB_TXT[j.etat] || j.etat)))));
+          j.format.toUpperCase().replace('MP4', 'Clip') + ' · ' + (j.local ? 'mobile · ' : '') + (j.etat === 'erreur' ? j.message : j.local && j.etat === 'termine' ? 'Sur le mobile ✓' : j.local && j.etat === 'telechargement' ? 'Téléchargement sur le mobile' : JOB_TXT[j.etat] || j.etat))),
+      j.local && j.etat === 'telechargement' ? h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Annuler', html: iconHTML('close', 18), onclick: () => { try { NATIVE.dlCancel(j.id); } catch (e) { /* rien */ } } }) : null));
   }
 }
 function askLink() {
@@ -1968,7 +2128,7 @@ function trackMenu(t) {
       h('span', { class: 'badge', style: 'width:24px;height:24px;font-size:12px;border-radius:7px;background:var(--accent)' }, 'A'), on.includes('A') ? 'Sur la platine A ✓ (recharger)' : 'Charger sur la platine A') : null,
     t.type === 'audio' ? h('button', { class: 'menu-item', type: 'button', onclick: () => { closeSheet(); MIX.load('B', t); setTab('mix'); } },
       h('span', { class: 'badge', style: 'width:24px;height:24px;font-size:12px;border-radius:7px;background:var(--deckb)' }, 'B'), on.includes('B') ? 'Sur la platine B ✓ (recharger)' : 'Charger sur la platine B') : null,
-    S.online && t.categorie != null ? h('button', { class: 'menu-item', type: 'button', onclick: () => moveMenu(t) },
+    S.online && t.categorie != null && S.lib.some((x) => x.id === t.id) ? h('button', { class: 'menu-item', type: 'button', onclick: () => moveMenu(t) },
       ico('music', 20), 'Ranger dans une catégorie' + (t.categorie ? ' (' + t.categorie + ')' : '')) : null,
     S.online && S.lib.some((x) => x.id === t.id) ? h('button', { class: 'menu-item', type: 'button', onclick: () => renameMenu(t) },
       h('span', { class: 'ico', html: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/></svg>' }), 'Renommer') : null,
@@ -3813,6 +3973,7 @@ function scanGate() {
   if (linked) toast('PC relié ✓ Ajoute maintenant l’app à l’écran d’accueil.', 4000);
   await tick(true);
   render();
+  window.kadansShare();   // ouvert par « Partager » depuis une autre app
   setInterval(tick, 2500);
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
