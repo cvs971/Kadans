@@ -605,3 +605,7 @@ body.mix-land:not(.mix-tall) .hp-row{flex:2 1 0;min-width:0}
 .pls-tile .ico{color:var(--deckb)}
 .pls-tile.on{background:rgba(255,122,69,.14);border-color:rgba(255,122,69,.55)}
 .pls-tile.on .t1{color:#FF9A6B}
+/* Playlist : « Tout cocher » et « Tout désélectionner » côte à côte */
+.factions.pl-acts{flex-wrap:nowrap}
+.factions.pl-acts .btn{flex:1 1 auto;min-width:0;gap:5px;padding-left:6px;padding-right:6px;letter-spacing:-.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+.pl-none .ico{color:#FF5A5A}
