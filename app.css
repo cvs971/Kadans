@@ -602,3 +602,6 @@ body.mix-land:not(.mix-tall) .hp-row{flex:2 1 0;min-width:0}
 .cat-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cat-acts{display:flex;flex-wrap:wrap;gap:6px;padding:6px 4px 2px}
 .ftile.new{border-style:dashed;color:var(--muted)}
+.pls-tile .ico{color:var(--deckb)}
+.pls-tile.on{background:rgba(255,122,69,.14);border-color:rgba(255,122,69,.55)}
+.pls-tile.on .t1{color:#FF9A6B}

@@ -1304,19 +1304,82 @@ function plsRedraw() {
   else render();
   plRefresh(); plMark();
 }
-// choix de la playlist, en haut de la fenêtre « Ma playlist »
+// ---- dossiers de playlists : le dossier fait partie du nom (« Soirées/Mariage »), ainsi le PC le garde tel quel.
+// Un dossier encore vide n'existe que sur ce téléphone, jusqu'à ce qu'on y range une playlist.
+const plsDirOf = (nom) => (nom.includes('/') ? nom.slice(0, nom.lastIndexOf('/')) : '');
+const plsLeaf = (nom) => nom.split('/').pop();
+const plsLabel = (nom) => (nom || '').split('/').join(' › ');
+const plsClean = (s) => s.split('/').map((p) => p.trim()).filter(Boolean).join('/');
+const PLD = {
+  dir: localStorage.getItem('kadans.plDir') || '',
+  empty: new Set(safeList('kadans.plDossiers').filter((d) => typeof d === 'string')),
+  save() { try { localStorage.setItem('kadans.plDir', this.dir); localStorage.setItem('kadans.plDossiers', JSON.stringify([...this.empty])); } catch (e) { /* plein */ } },
+  all() {
+    const set = new Set(this.empty);
+    for (const x of PLS.list()) for (let d = plsDirOf(x.nom); d; d = plsDirOf(d)) set.add(d);
+    return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
+  },
+  open(d) { this.dir = d; this.save(); },
+};
+// choix de la playlist, en haut de la fenêtre « Ma playlist » : dossiers et playlists en tuiles
 function plsBar(again) {
-  const sel = h('select', { class: 'input pls-sel', 'aria-label': 'Choisir la playlist' }, PLS.list().map((x) => h('option', { value: x.id }, x.nom)));
-  sel.value = PLS.active;
-  sel.onchange = () => { PLS.activate(sel.value); again(); };
+  const dirs = PLD.all();
+  if (PLD.dir && !dirs.includes(PLD.dir)) PLD.open('');
+  const D = PLD.dir, cur = PLS.cur();
+  const inDir = (nom, d) => !d || nom.startsWith(d + '/');
+  const go = (d) => { PLD.open(d); again(); };
+  const crumbs = h('div', { class: 'crumbs' }, h('button', { type: 'button', 'aria-current': D ? null : 'page', onclick: () => go('') }, 'Toutes les playlists'));
+  if (D) D.split('/').forEach((seg, i, arr) => crumbs.append(h('span', { class: 'sep' }, '›'),
+    h('button', { type: 'button', 'aria-current': i === arr.length - 1 ? 'page' : null, onclick: () => go(arr.slice(0, i + 1).join('/')) }, seg)));
+  const folderSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+  const tiles = [
+    ...dirs.filter((d) => plsDirOf(d) === D).map((d) => {
+      const n = PLS.list().filter((x) => inDir(x.nom, d)).length;
+      return h('button', { class: 'ftile', type: 'button', onclick: () => go(d) },
+        h('span', { class: 'ico', html: folderSvg }),
+        h('span', { class: 'm' }, h('span', { class: 't1' }, plsLeaf(d)), h('span', { class: 't2' }, n ? n + ' playlist' + (n > 1 ? 's' : '') : 'vide')));
+    }),
+    ...PLS.list().filter((x) => plsDirOf(x.nom) === D).map((x) =>
+      h('button', { class: 'ftile pls-tile' + (x.id === cur.id ? ' on' : ''), type: 'button', 'aria-pressed': String(x.id === cur.id), onclick: () => { PLS.activate(x.id); again(); } },
+        h('span', { class: 'ico', html: iconHTML('playlist', 20) }),
+        h('span', { class: 'm' }, h('span', { class: 't1' }, plsLeaf(x.nom)), h('span', { class: 't2' }, (x.ids || []).length + ' morceau' + ((x.ids || []).length > 1 ? 'x' : ''))))),
+  ];
+  const ask = (title, value) => plsClean((prompt(title, value) || '').replace(/\\/g, '/'));
+  const full = (d, n) => (d ? d + '/' + n : n);
+  const fits = (nom) => { if (nom.length > 60) { toast('Nom trop long (dossier compris, 60 caractères au plus)'); return false; } return true; };
   const now = PLS.nowLabel();
-  const named = (title, value, fn) => { const nom = (prompt(title, value) || '').trim(); if (nom) { fn(nom); again(); } };
-  return h('div', { class: 'pls-bar' }, sel,
+  // ranger la playlist choisie dans un dossier
+  const move = h('select', { class: 'input pls-sel', 'aria-label': 'Ranger la playlist dans un dossier' },
+    h('option', { value: '' }, 'Aucun dossier'),
+    dirs.map((d) => h('option', { value: d }, plsLabel(d))));
+  move.value = plsDirOf(cur.nom);
+  move.onchange = () => {
+    const nom = full(move.value, plsLeaf(cur.nom));
+    if (!fits(nom)) { move.value = plsDirOf(cur.nom); return; }
+    PLD.empty.delete(move.value); PLS.rename(nom); PLD.open(move.value); again();
+  };
+  const emptyHere = D && PLD.empty.has(D) && !PLS.list().some((x) => inDir(x.nom, D)) && !dirs.some((d) => d.startsWith(D + '/'));
+  return h('div', { class: 'pls-bar' }, crumbs,
+    tiles.length ? h('div', { class: 'ftiles', style: 'margin-bottom:0' }, tiles) : h('p', { class: 'pg-muted', style: 'margin:0' }, 'Dossier vide : crée une playlist ici, ou ranges-en une avec « Ranger dans ».'),
     h('div', { class: 'pl-sheet-tools' },
-      h('button', { class: 'pg-btn sm', type: 'button', onclick: () => named('Nom de la nouvelle playlist', '', (n) => PLS.create(n)) }, 'Nouvelle'),
-      h('button', { class: 'pg-btn sm', type: 'button', onclick: () => named('Renommer la playlist', PLS.cur().nom, (n) => PLS.rename(n)) }, 'Renommer'),
-      h('button', { class: 'pg-btn sm', type: 'button', onclick: () => { if (confirm('Supprimer la playlist « ' + PLS.cur().nom + ' » ?\nLes morceaux ne sont pas touchés. Elle disparaît aussi du PC.')) { PLS.remove(); again(); } } }, 'Supprimer')),
-    now ? h('div', { class: 'pls-now' }, 'En cours : ' + now) : null);
+      h('button', { class: 'pg-btn sm', type: 'button', onclick: () => {
+        const n = ask(D ? 'Nouvelle playlist dans « ' + plsLeaf(D) + ' »' : 'Nom de la nouvelle playlist', ''); if (!n) return;
+        const nom = full(D, n); if (!fits(nom)) return;
+        PLD.empty.delete(plsDirOf(nom)); PLD.save(); PLS.create(nom); again();
+      } }, 'Nouvelle playlist'),
+      h('button', { class: 'pg-btn sm', type: 'button', onclick: () => {
+        const n = ask(D ? 'Nouveau sous-dossier dans « ' + plsLeaf(D) + ' »' : 'Nom du nouveau dossier', ''); if (!n) return;
+        const d = full(D, n); if (!fits(d + '/x')) return;
+        PLD.empty.add(d); go(d);
+      } }, D ? 'Nouveau sous-dossier' : 'Nouveau dossier'),
+      h('button', { class: 'pg-btn sm', type: 'button', onclick: () => {
+        const n = ask('Renommer la playlist', plsLeaf(cur.nom)); if (!n) return;
+        const nom = full(plsDirOf(cur.nom), n); if (fits(nom)) { PLS.rename(nom); again(); }
+      } }, 'Renommer'),
+      h('button', { class: 'pg-btn sm', type: 'button', onclick: () => { if (confirm('Supprimer la playlist « ' + plsLabel(cur.nom) + ' » ?\nLes morceaux ne sont pas touchés. Elle disparaît aussi du PC.')) { PLS.remove(); again(); } } }, 'Supprimer la playlist'),
+      emptyHere ? h('button', { class: 'pg-btn sm', type: 'button', onclick: () => { PLD.empty.delete(D); go(plsDirOf(D)); } }, 'Supprimer ce dossier') : null),
+    h('span', { class: 'pg-label' }, 'Ranger « ' + plsLeaf(cur.nom) + ' » dans le dossier'), move,
+    now ? h('div', { class: 'pls-now' }, 'En cours : ' + plsLabel(now)) : null);
 }
 const plAll = () => allTracks().filter((t) => t.type !== 'video');
 function plTracks() { const by = new Map(plAll().map((t) => [t.id, t])); return PL.ids.map((id) => by.get(id)).filter(Boolean); }
@@ -1348,7 +1411,7 @@ function plBar() {
   const list = plTracks(), total = list.reduce((a, t) => a + (t.duree || 0), 0);
   return h('div', { class: 'pl-bar', id: 'pl-bar' },
     h('button', { class: 'pl-bar-list', type: 'button', onclick: plSheet },
-      h('b', null, PLS.cur().nom),
+      h('b', null, plsLabel(PLS.cur().nom)),
       h('span', null, list.length ? list.length + ' morceau' + (list.length > 1 ? 'x' : '') + ' · ' + (fmtTime(total) || '') + ' · voir l’ordre' : 'Aucun morceau · touche ici pour choisir une playlist')),
     h('button', { class: 'pg-btn primary', type: 'button', disabled: !list.length, onclick: () => MIX.autoStart(plTracks(), PL.beats) },
       MIX.auto && MIX.auto.plId === PLS.active ? 'Relancer' : 'Mixer'));
@@ -1428,7 +1491,7 @@ function plSheet() {
     const again = () => { body.replaceWith(draw()); plRefresh(); plMark(); };
     const body = h('div', { class: 'pg', id: 'pl-sheet-body', style: 'gap:12px' },
       plsBar(again),
-      h('div', null, h('h2', { style: 'margin:0;font-size:20px' }, PLS.cur().nom), h('p', { class: 'pg-muted' }, list.length + ' morceau' + (list.length > 1 ? 'x' : '') + ' · les platines A et B s’alternent, transition juste avant que chaque morceau ne baisse.')),
+      h('div', null, h('h2', { style: 'margin:0;font-size:20px' }, plsLabel(PLS.cur().nom)), h('p', { class: 'pg-muted' }, list.length + ' morceau' + (list.length > 1 ? 'x' : '') + ' · les platines A et B s’alternent, transition juste avant que chaque morceau ne baisse.')),
       h('div', { class: 'pl-sheet-tools' },
         h('button', { class: 'pg-btn sm', type: 'button', onclick: () => { const by = new Map(plAll().map((t) => [t.id, t])); PL.ids.sort((a, b) => ((by.get(a) || {}).bpm || 999) - ((by.get(b) || {}).bpm || 999)); plSave(); body.replaceWith(draw()); } }, 'Trier par BPM'),
         h('button', { class: 'pg-btn sm', type: 'button', onclick: () => { for (let i = PL.ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [PL.ids[i], PL.ids[j]] = [PL.ids[j], PL.ids[i]]; } plSave(); body.replaceWith(draw()); } }, 'Mélanger'),
@@ -1477,10 +1540,6 @@ function viewPlaylist() {
     };
     const tiles = subs.map((c) => tile(c, c.split('/').pop()));
     if (F == null && all.some((t) => t.categorie === '')) tiles.push(tile('', 'Sans catégorie'));
-    // créer un dossier ici (dans le dossier ouvert : un sous-dossier), sur le PC
-    if (F !== '') tiles.push(h('button', { class: 'ftile new', type: 'button', onclick: () => askCategory((nom) => { PL.folder = nom; draw(); $('#view').scrollTop = 0; }, F || undefined) },
-      h('span', { class: 'ico', html: iconHTML('folderPlus', 22) }),
-      h('span', { class: 'm' }, h('span', { class: 't1' }, F ? 'Sous-dossier' : 'Nouveau dossier'), h('span', { class: 't2' }, F ? 'dans « ' + F.split('/').pop() + ' »' : 'sur le PC'))));
     const rows = shown();
     const playable_ = rows.filter((t) => playable(t));
     const allOn = playable_.length && playable_.every((t) => PL.ids.includes(t.id));
