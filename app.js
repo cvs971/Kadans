@@ -1088,7 +1088,7 @@ function viewAdd() {
     statusPill()));
   wrap.append(h('div', { class: 'pg-hero' },
     h('h1', null, 'Ajouter de la musique'),
-    h('p', null, 'Colle un lien YouTube : ton PC le télécharge, l’analyse et le range.')));
+    h('p', null, 'Colle un lien : ton PC le télécharge, l’analyse et le range.')));
 
   if (!S.server) {
     const step = (n, t1, t2) => h('li', null, h('span', { class: 'pg-num' }, String(n)), h('span', null, h('b', null, t1), h('span', null, t2)));
@@ -1111,7 +1111,7 @@ function viewAdd() {
         h('button', { class: 'pg-btn sm', type: 'button', onclick: scanQR }, 'Rescanner')));
     }
     const input = h('input', { id: 'lien', class: 'pg-input', type: 'url', inputmode: 'url', autocomplete: 'off',
-      placeholder: 'https://youtube.com/watch?v=…', 'aria-label': 'Lien YouTube' });
+      placeholder: 'https://…', 'aria-label': 'Lien' });
     const paste = h('button', { class: 'pg-paste', type: 'button', onclick: async () => {
       try { input.value = (await navigator.clipboard.readText()).trim(); } catch (e) { input.focus(); toast('Appuie longuement dans le champ, puis « Coller ».'); }
     } }, ico('clip', 16), 'Coller');
@@ -1149,7 +1149,7 @@ function viewAdd() {
       go.disabled = false;
     } }, ico('download', 18), 'Télécharger');
     wrap.append(h('div', { class: 'pg-card' },
-      h('label', { class: 'pg-label', for: 'lien' }, 'Lien YouTube'),
+      h('label', { class: 'pg-label', for: 'lien' }, 'Lien'),
       h('div', { class: 'pg-field' }, input, paste),
       h('span', { class: 'pg-label' }, 'Format'), seg,
       h('span', { class: 'pg-label' }, 'Ranger dans'), catChips,
