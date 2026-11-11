@@ -2114,6 +2114,22 @@ const RELAY = {
     el.src = SILENCE;
     el.play().catch(() => {});
     setInterval(() => this.tick(), 1500);
+    // iOS ne laisse un lecteur charger un fichier qu'après un premier lancement fait PENDANT un toucher.
+    // Sans ça, le secours garde le petit silence (journal v68 : « chargé 4, durée 0.0 » avec le bon lien).
+    const unlock = () => this.unlock();
+    for (const ev of ['touchend', 'click']) document.addEventListener(ev, unlock, { capture: true });
+    this.unlockOff = () => { for (const ev of ['touchend', 'click']) document.removeEventListener(ev, unlock, { capture: true }); };
+  },
+  unlock() {
+    const el = this.el;
+    if (!el || this.unlocked || this.active) return;
+    el.muted = true;
+    el.load();   // pendant le toucher : le lien en place (morceau ou silence) est vraiment chargé
+    el.play().then(() => {
+      this.unlocked = true; this.unlockOff();
+      this.armTrack = null;   // la copie se recharge, maintenant autorisée
+      this.follow();
+    }).catch(() => { /* au prochain toucher */ });
   },
   // iOS ignore parfois un déplacement, même morceau déjà annoncé comme chargé : on recommence jusqu'à le voir jouer au bon endroit
   seekTo(pos) { this.wantPos = pos; this.tries = 0; this.applyWant(); },
@@ -2134,7 +2150,7 @@ const RELAY = {
   showLog() {
     const old = document.getElementById('relay-log'); if (old) old.remove();
     document.body.append(h('div', { id: 'relay-log', style: 'position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top) + 8px);z-index:200;max-height:45vh;overflow:auto;padding:10px;border-radius:12px;background:#000;color:#fff;font:12px/1.35 monospace;white-space:pre-wrap;-webkit-user-select:text;user-select:text;border:1px solid #666', onclick: (e) => { if (e.target.tagName === 'BUTTON') e.currentTarget.remove(); } },
-      'Arrière-plan v68\n' + this.log.join('\n') + '\n', h('button', { type: 'button', style: 'margin-top:6px;padding:6px 12px' }, 'Fermer')));
+      'Arrière-plan v73\n' + this.log.join('\n') + '\n', h('button', { type: 'button', style: 'margin-top:6px;padding:6px 12px' }, 'Fermer')));
   },
   // lecteur muet : réessaie s'il a été refusé, et reste calé sur la platine
   tick() {
@@ -2171,6 +2187,7 @@ const RELAY = {
     if (this.armUrl && this.armUrl.startsWith('blob:')) URL.revokeObjectURL(this.armUrl);
     this.armTrack = t; this.armUrl = url;
     if (this.el.src !== url) this.el.src = url;
+    else if (!(this.el.duration > 1)) this.el.load();   // même lien mais rien de chargé : on recharge pour de vrai
     return url;
   },
   async arm(d) {
@@ -2209,7 +2226,7 @@ const RELAY = {
     el.playbackRate = d.el.playbackRate;
     this.t0 = Date.now();
     const kind = (u) => (u || '').startsWith('blob:') ? 'iPhone' : 'PC';
-    this.log = ['secours avant : ' + (el.paused ? 'arrêté' : 'joue') + ', chargé ' + el.readyState + ', à ' + el.currentTime.toFixed(1) + ' / ' + (el.duration || 0).toFixed(1) + ', muet ' + el.muted + ', copie ' + (ready ? 'à lui (' + kind(el.src) + ')' : 'partagée') + ' ; platine à ' + d.el.currentTime.toFixed(1) + ' / ' + (d.el.duration || 0).toFixed(1) + ' (' + kind(d.el.currentSrc) + ') ; moteur ' + MIX.ctx.state];
+    this.log = ['secours avant : ' + (el.paused ? 'arrêté' : 'joue') + ', chargé ' + el.readyState + ', à ' + el.currentTime.toFixed(1) + ' / ' + (el.duration || 0).toFixed(1) + ', muet ' + el.muted + ', débloqué ' + (this.unlocked ? 'oui' : 'non') + ', copie ' + (ready ? 'à lui (' + kind(el.src) + ')' : 'partagée') + ' ; platine à ' + d.el.currentTime.toFixed(1) + ' / ' + (d.el.duration || 0).toFixed(1) + ' (' + kind(d.el.currentSrc) + ') ; moteur ' + MIX.ctx.state];
     this.active = true; this.failed = false; this.manual = false; this.why = ''; this.retried = false; this.lastBeat = Date.now(); this.deck = d; this.track = d.track;
     el.muted = false;
     if (el.paused || el.ended) el.play().catch((e) => { if (!this.retried) { this.failed = true; this.note('démarrage refusé (' + (e.name || '?') + ')'); } });
