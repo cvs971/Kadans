@@ -681,3 +681,8 @@ body.mix-tall .xf-btns .btn.small{padding:0 9px;font-size:13px}
 /* barres de défilement douces : fines, couleur du thème */
 *{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.14) transparent}
 *:hover{scrollbar-color:rgba(255,255,255,.26) transparent}
+/* playlist : glisser un morceau à l'endroit voulu (plus de flèches) */
+.pl-drop-line{height:3px;margin:-1px 6px;border-radius:2px;background:var(--accent);box-shadow:0 0 0 3px rgba(255,122,69,.25);list-style:none;padding:0}
+body.pl-drag-in .tab-pl{outline:2px dashed rgba(255,122,69,.55);outline-offset:-4px;border-radius:14px}
+.tab-row{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.pl-order li{cursor:grab}
