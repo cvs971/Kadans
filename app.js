@@ -2031,7 +2031,7 @@ const RELAY = {
   trace(msg) {   // lignes identiques à la suite regroupées (« ×9 ») pour que le journal tienne à l'écran
     const last = this.log[this.log.length - 1] || '', m = last.match(/^[\d.]+ s : (.*?)(?: ×(\d+))?$/);
     if (m && m[1] === msg) { this.log[this.log.length - 1] = last.replace(/(?: ×\d+)?$/, ' ×' + ((+m[2] || 1) + 1)); return; }
-    if (this.log.length < 40) this.log.push(((Date.now() - this.t0) / 1000).toFixed(1) + ' s : ' + msg);
+    if (this.log.length < 80) this.log.push(((Date.now() - this.t0) / 1000).toFixed(1) + ' s : ' + msg);
   },
   // journal affiché au retour dans l'app, pour comprendre ce que fait iOS
   showLog() {
@@ -2041,6 +2041,10 @@ const RELAY = {
   },
   // lecteur muet : réessaie s'il a été refusé, et reste calé sur la platine
   tick() {
+    if (this.el && this.active && !this.returning && Date.now() - (this.lastBeat || 0) > 10000) {   // pouls : si les lignes s'arrêtent, iOS a gelé l'app
+      this.lastBeat = Date.now();
+      this.trace('pouls : ' + (this.el.paused ? 'arrêté' : 'joue') + ' à ' + this.el.currentTime.toFixed(0) + ' / ' + (this.el.duration || 0).toFixed(0));
+    }
     if (!this.el || this.active) return;
     this.follow();
     const d = this.armed, el = this.el;
@@ -2109,7 +2113,7 @@ const RELAY = {
     this.t0 = Date.now();
     const kind = (u) => (u || '').startsWith('blob:') ? 'iPhone' : 'PC';
     this.log = ['secours avant : ' + (el.paused ? 'arrêté' : 'joue') + ', chargé ' + el.readyState + ', à ' + el.currentTime.toFixed(1) + ' / ' + (el.duration || 0).toFixed(1) + ', muet ' + el.muted + ', copie ' + (ready ? 'à lui (' + kind(el.src) + ')' : 'partagée') + ' ; platine à ' + d.el.currentTime.toFixed(1) + ' / ' + (d.el.duration || 0).toFixed(1) + ' (' + kind(d.el.currentSrc) + ') ; moteur ' + MIX.ctx.state];
-    this.active = true; this.failed = false; this.manual = false; this.why = ''; this.retried = false; this.deck = d; this.track = d.track;
+    this.active = true; this.failed = false; this.manual = false; this.why = ''; this.retried = false; this.lastBeat = Date.now(); this.deck = d; this.track = d.track;
     el.muted = false;
     if (el.paused || el.ended) el.play().catch((e) => { if (!this.retried) { this.failed = true; this.note('démarrage refusé (' + (e.name || '?') + ')'); } });
     // copie vue vide (iOS ne la charge pas tant que l'app est au premier plan) : nouvelle copie tout de suite
