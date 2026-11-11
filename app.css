@@ -590,3 +590,15 @@ body.tablet.mix-land .wave{height:52px}
 /* paysage : le crossfader garde sa place à côté de la pré-écoute (il était écrasé) */
 body.mix-land:not(.mix-tall) .xf-row{flex:3 1 0;min-width:0}
 body.mix-land:not(.mix-tall) .hp-row{flex:2 1 0;min-width:0}
+/* arbre des dossiers (page Ajouter) : comme sur le PC, flèche pour ouvrir / fermer les sous-dossiers */
+.cat-tree{display:flex;flex-direction:column;gap:2px;max-height:300px;overflow-y:auto;padding:4px;border-radius:14px;background:var(--bg);border:1px solid var(--line2)}
+.cat-row{display:flex;align-items:center;gap:2px;min-height:40px;border-radius:10px}
+.cat-row[aria-current="true"]{background:rgba(255,122,69,.14);box-shadow:inset 0 0 0 1px rgba(255,122,69,.55)}
+.cat-row[aria-current="true"] .cat-name{color:#FF9A6B;font-weight:600}
+.cat-arrow{width:32px;height:36px;flex-shrink:0;border:0;background:none;color:var(--muted);font-size:14px;border-radius:8px}
+.cat-arrow.none{display:inline-block}
+.cat-name{display:flex;align-items:center;gap:8px;flex:1;min-width:0;height:40px;padding:0 8px 0 0;border:0;background:none;color:#C9C7C2;font-size:15px;font-weight:500;text-align:left}
+.cat-name .ico{color:var(--accent);flex-shrink:0}
+.cat-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cat-acts{display:flex;flex-wrap:wrap;gap:6px;padding:6px 4px 2px}
+.ftile.new{border-style:dashed;color:var(--muted)}

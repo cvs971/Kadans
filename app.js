@@ -35,6 +35,7 @@ const ICONS = {
   palette: P('<path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 21 9.8C21 6 17 3 12 3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7" r="1"/>'),
   image: P('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>'),
   close: P('<path d="M6 6l12 12M18 6L6 18"/>'),
+  folderPlus: P('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 10v6M9 13h6"/>'),
   down: P('<path d="M6 9l6 6 6-6"/>'),
   stop: '<svg width="SZ" height="SZ" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
   link: P('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
@@ -431,26 +432,62 @@ function setCats(list) {
   if (S.cat && !list.includes(S.cat)) { S.cat = ''; localStorage.setItem('kadans.cat', ''); }
 }
 // Feuille « Nouvelle catégorie » : crée le dossier sur le PC, puis rappelle done(nom).
-function askCategory(done) {
+// parent : crée un sous-dossier de ce dossier (« Zouk » + « Années 80 » -> « Zouk/Années 80 »)
+function askCategory(done, parent) {
+  if (!S.online) { toast('Ton PC doit être joignable pour créer un dossier.'); return; }
   openSheet(() => {
-    const inp = h('input', { class: 'input', type: 'text', maxlength: 60, placeholder: 'Ex. Zouk, Kompa, Dancehall…', 'aria-label': 'Nom de la catégorie' });
+    const inp = h('input', { class: 'input', type: 'text', maxlength: 60, placeholder: parent ? 'Ex. Années 80, Slow, Live…' : 'Ex. Zouk, Kompa, Dancehall…', 'aria-label': 'Nom du dossier' });
     const ok = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
       const nom = inp.value.trim();
       if (!nom) { inp.focus(); return; }
       ok.disabled = true;
       try {
-        const d = await api('/api/categories', { method: 'POST', json: { nom } });
+        const d = await api('/api/categories', { method: 'POST', json: { nom: parent ? parent + '/' + nom : nom } });
         setCats(d.categories.map((c) => c.nom));
-        closeSheet(); toast('Catégorie « ' + d.nom + ' » créée ✓');
+        S.catsAt = Date.now();
+        for (let p = parentOf(d.nom); p; p = parentOf(p)) CAT_OPEN.add(p);   // le nouveau dossier reste visible
+        saveCatOpen();
+        closeSheet(); toast('Dossier « ' + d.nom.split('/').join(' › ') + ' » créé ✓');
         done(d.nom);
       } catch (e) { toast(e.message); ok.disabled = false; }
     } }, 'Créer');
     setTimeout(() => inp.focus(), 50);
     return h('div', { class: 'card', style: 'background:none;border:0;padding:0' },
-      h('b', null, 'Nouvelle catégorie'),
-      h('p', { class: 'sub', style: 'margin:0' }, 'Un dossier de ce nom est créé sur ton PC, dans le dossier de téléchargement.'),
+      h('b', null, parent ? 'Nouveau sous-dossier dans « ' + parent.split('/').pop() + ' »' : 'Nouveau dossier'),
+      h('p', { class: 'sub', style: 'margin:0' }, parent
+        ? 'Créé sur ton PC, à l’intérieur de « ' + parent.split('/').join(' › ') + ' ».'
+        : 'Un dossier de ce nom est créé sur ton PC, dans le dossier de téléchargement.'),
       inp, ok);
   });
+}
+// ---- arbre des dossiers (comme sur le PC) : les sous-dossiers se ferment et s'ouvrent avec la flèche
+const CAT_OPEN = new Set(safeList('kadans.catsOuverts').filter((c) => typeof c === 'string'));
+function saveCatOpen() { try { localStorage.setItem('kadans.catsOuverts', JSON.stringify([...CAT_OPEN])); } catch (e) { /* plein */ } }
+function catTree(selected, onSelect) {
+  const box = h('div'), list = h('div', { class: 'cat-tree', role: 'group', 'aria-label': 'Dossier' });
+  const kidsOf = (c) => S.cats.some((x) => x.startsWith(c + '/'));
+  const visible = (c) => { for (let p = parentOf(c); p; p = parentOf(p)) if (!CAT_OPEN.has(p)) return false; return true; };
+  const row = (val, label, depth, hasKids) => {
+    const open = CAT_OPEN.has(val);
+    const arrow = hasKids
+      ? h('button', { class: 'cat-arrow', type: 'button', 'aria-label': (open ? 'Fermer ' : 'Ouvrir ') + label, 'aria-expanded': String(open), onclick: (e) => {
+        e.stopPropagation();
+        if (open) CAT_OPEN.delete(val); else CAT_OPEN.add(val);
+        saveCatOpen(); box.replaceWith(catTree(selected, onSelect));
+      } }, open ? '▾' : '▸')
+      : h('span', { class: 'cat-arrow none' });
+    return h('div', { class: 'cat-row', style: 'padding-left:' + (4 + depth * 18) + 'px', 'aria-current': selected === val ? 'true' : null }, arrow,
+      h('button', { class: 'cat-name', type: 'button', onclick: () => onSelect(val) },
+        h('span', { class: 'ico', html: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>' }),
+        h('span', { class: 'cat-label' }, label)));
+  };
+  list.append(row('', 'Sans catégorie', 0, false));
+  allFolders([]).filter(visible).forEach((c) => list.append(row(c, c.split('/').pop(), c.split('/').length - 1, kidsOf(c))));
+  const acts = h('div', { class: 'cat-acts' },
+    h('button', { class: 'pg-chip add', type: 'button', onclick: () => askCategory(onSelect) }, '+ Nouveau dossier'),
+    selected ? h('button', { class: 'pg-chip add', type: 'button', onclick: () => askCategory(onSelect, selected) }, '+ Sous-dossier dans « ' + selected.split('/').pop() + ' »') : null);
+  box.append(list, acts);
+  return box;
 }
 // Feuille « Renommer » : renomme le fichier sur le PC (« Artiste - Titre » met aussi à jour l'artiste).
 function renameMenu(t) {
@@ -1086,16 +1123,11 @@ function viewAdd() {
         e.currentTarget.setAttribute('aria-pressed', 'true');
       } }, label));
     });
-    const catChips = h('div', { class: 'pg-chips', role: 'group', 'aria-label': 'Catégorie' });
-    const drawCatChips = () => {
-      catChips.replaceChildren(...[['', 'Sans catégorie'], ...S.cats.map((c) => [c, c])].map(([val, label]) =>
-        h('button', { class: 'pg-chip', type: 'button', 'aria-pressed': String(S.cat === val), onclick: () => {
-          S.cat = val; localStorage.setItem('kadans.cat', val); drawCatChips();
-        } }, label)),
-      h('button', { class: 'pg-chip add', type: 'button', onclick: () => askCategory((nom) => {
-        S.cat = nom; localStorage.setItem('kadans.cat', nom); drawCatChips();
-      }) }, '+ Nouvelle'));
-    };
+    // dossiers en arbre, comme sur le PC : les sous-dossiers se ferment avec la flèche
+    const catChips = h('div');
+    const pick = (val) => { S.cat = val; localStorage.setItem('kadans.cat', val); drawCatChips(); };
+    const drawCatChips = () => catChips.replaceChildren(catTree(S.cat, pick));
+    for (let p = S.cat ? parentOf(S.cat) : null; p; p = parentOf(p)) CAT_OPEN.add(p);   // le dossier choisi reste visible
     drawCatChips();
     const go = h('button', { class: 'pg-btn primary', type: 'button', onclick: async () => {
       const url = input.value.trim();
@@ -1445,6 +1477,10 @@ function viewPlaylist() {
     };
     const tiles = subs.map((c) => tile(c, c.split('/').pop()));
     if (F == null && all.some((t) => t.categorie === '')) tiles.push(tile('', 'Sans catégorie'));
+    // créer un dossier ici (dans le dossier ouvert : un sous-dossier), sur le PC
+    if (F !== '') tiles.push(h('button', { class: 'ftile new', type: 'button', onclick: () => askCategory((nom) => { PL.folder = nom; draw(); $('#view').scrollTop = 0; }, F || undefined) },
+      h('span', { class: 'ico', html: iconHTML('folderPlus', 22) }),
+      h('span', { class: 'm' }, h('span', { class: 't1' }, F ? 'Sous-dossier' : 'Nouveau dossier'), h('span', { class: 't2' }, F ? 'dans « ' + F.split('/').pop() + ' »' : 'sur le PC'))));
     const rows = shown();
     const playable_ = rows.filter((t) => playable(t));
     const allOn = playable_.length && playable_.every((t) => PL.ids.includes(t.id));
