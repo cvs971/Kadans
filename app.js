@@ -3443,9 +3443,13 @@ const MIX = {
     if (au.list[au.i + 1]) return;
     const ref = au.list[au.i] || {}, onDecks = new Set(Object.values(this.decks).map((d) => d.track && d.track.id));
     const bpm = ref.bpm ? ref.bpm * this.rate(this.decks[au.cur]) : 0;
+    // d'abord dans le dossier racine du morceau en cours (Dancehall pour Dancehall › Kalash), sinon partout
+    const root = ref.categorie != null ? ref.categorie.split('/')[0] : null;
+    const inRoot = (t) => root == null || (root === '' ? t.categorie === '' : inFolder(t, root));
     let best = null, bestS = Infinity;
     for (const t of allTracks()) {
       if (t.type === 'video' || !playable(t) || onDecks.has(t.id) || au.played.has(t.id)) continue;
+      if (!au.anywhere && !inRoot(t)) continue;
       let sc = 0;
       if (bpm && t.bpm) {
         let r = t.bpm / bpm; if (r > 1.5) r /= 2; else if (r < 0.67) r *= 2;   // moitié / double
@@ -3457,6 +3461,7 @@ const MIX = {
       sc += Math.random() * 1.5;   // un peu de variété d'une séance à l'autre
       if (sc < bestS) { bestS = sc; best = t; }
     }
+    if (!best && root != null && !au.anywhere) { au.anywhere = true; this.freeFill(au); au.anywhere = false; return; }
     if (best) { au.list.push(best); au.played.add(best.id); }
   },
   automix() {
